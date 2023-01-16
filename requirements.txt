@@ -1,0 +1,5 @@
+conda create -n env_name python=3.10 cudatoolkit=11.7 matplotlib pytorch pytorch-cuda=11.7 pyg pickleshare cloudpickle networkx -c pytorch -c nvidia -c pyg
+
+or 
+
+conda install cudatoolkit=11.7 matplotlib pytorch pytorch-cuda=11.7 pyg pickleshare cloudpickle networkx -c pytorch -c nvidia -c pyg
