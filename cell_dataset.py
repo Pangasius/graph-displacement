@@ -8,6 +8,8 @@ import torch
 import pickle
 import lzma
 
+import os
+
 import random
 
 import threading
@@ -191,11 +193,22 @@ class CellGraphDataset(Dataset):
             
         return self.process_file(self.paths.fget()[idx])
         
-    def dump_source(self, path):
+    def _dump_source(self, path):
         with open(path, 'wb') as f:
             pickle.dump(self.paths.fget(), f)
             
-    def overwrite_source(self, path):
+    def _overwrite_source(self, path):
         with open(path, 'rb') as f:
             #set the property to the new list of paths
             self.paths.fset(pickle.load(f))
+            
+    def save_or_load_if_exists(self, path):
+        if "sources" not in os.listdir():
+            os.mkdir("sources")
+
+        if path not in os.listdir("sources"):
+            #first time running, dump the paths to a pickle file
+            self._dump_source("sources/" + path)
+        else :
+            #overwrite the paths to the previous configuration
+            self._overwrite_source("sources/" + path)
