@@ -24,7 +24,7 @@ if ssh is None:
     print("Connection failed")
     raise SystemExit
 
-scp = SCPClient(ssh.get_transport())
+scp = SCPClient(ssh.get_transport()) # type: ignore
  
 #create a directory to store the downloaded files
 if not os.path.exists('data'):
