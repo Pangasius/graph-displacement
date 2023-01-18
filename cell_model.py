@@ -14,6 +14,7 @@ class GraphEvolution(torch.nn.Module):
             
         self.post = torch.nn.Linear(heads*hidden_channels, hidden_channels)
         self.post2 = torch.nn.Linear(hidden_channels, out_channels)
+        
         self.post3 = torch.nn.Linear(out_channels, hidden_channels)
         self.post4 = torch.nn.Linear(hidden_channels, out_channels)
 
@@ -38,7 +39,7 @@ class GraphEvolution(torch.nn.Module):
         y = self.post(y)
         # y is a tensor of shape (N*T, out_channels)
         y = F.elu(y)
-        y = self.post2(y) + x.reshape(xshape)
+        y = (self.post2(y).reshape(xshape) + x.reshape(xshape)).reshape(xshape[0]*xshape[1], 4)
         
         y = F.elu(y)
         y = self.post3(y)

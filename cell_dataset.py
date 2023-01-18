@@ -10,6 +10,7 @@ import lzma
 
 import random
 
+import threading
 #find /scratch/users/nstillman/data-cpp/train/ -name "*fast4p.p" -type f  | head | xargs du
 """
 27804   ./p000_r004_sb015_2148010_b039_fast4p.p                                                                         
@@ -25,7 +26,7 @@ import random
 """
 
 class CellGraphDataset(Dataset):
-    def __init__(self, root, max_size, transform=None, pre_transform=None, pre_filter=None, rdts=False, inmemory=False):
+    def __init__(self, root, max_size, transform=None, pre_transform=None, pre_filter=None, rdts=False, inmemory=False, bg_load=False):
         super().__init__(root, transform, pre_transform, pre_filter)
         
         #path to all the files
@@ -40,6 +41,12 @@ class CellGraphDataset(Dataset):
         
         self.attributes = ["distance_x", "distance_y", "degree", "velocity_x", "velocity_y", "epsilon", "tau", "v0"]
         
+        assert(inmemory | (not bg_load)) # bg load can't be true alone
+        
+        self.bg_load = bg_load
+        self.bg_load_running = False
+        self.waiting_for = -1
+        self.thread = None
         
     def _download(self):
         pass
@@ -79,10 +86,8 @@ class CellGraphDataset(Dataset):
             else :
                 raise ValueError("File type not supported for path: " + path)
             
-            if self.memorize :
-                self.memory[path] = x
         else :
-            x = self.memory[path]
+            return self.memory[path]
             
         # Parameters of interest: 
         #Attraction force: 
@@ -98,7 +103,7 @@ class CellGraphDataset(Dataset):
         rval = torch.tensor(x.rval)
         #Get time and number of cells from shape of position data
         old_T = rval.shape[0]
-        T = min(rval.shape[0], 20) #limiting for testing
+        T = min(rval.shape[0], 128) #limiting for testing
         N = rval.shape[1]
         
         try :
@@ -144,7 +149,7 @@ class CellGraphDataset(Dataset):
             
         #degree of the first node of the pair
         deg = deg.reshape(T*N)
-        edge_attr = torch.cat((edge_attr.reshape(-1, 1), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
+        edge_attr = torch.cat((edge_attr.reshape(-1, 2), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
         
         #also the difference of velocities
         edge_attr = torch.cat((edge_attr, torch.zeros((edge_attr.shape[0], 2))), dim=1)
@@ -157,12 +162,33 @@ class CellGraphDataset(Dataset):
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*epsilon), dim=1)
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*v0), dim=1)
         
+        if self.memorize :
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long))
+        
         return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long)
     
     def len(self):
         return len(self.paths.fget())
+    
+    def load_all(self) :
+        for i in reversed(range(self.len())) :
+            if self.memory.get(self.paths.fget()[i]) is None :
+                self.waiting_for = i
+                self.process_file(self.paths.fget()[i])
+            else :
+                self.waiting_for = -2
+                break
 
     def get(self, idx):
+        if self.bg_load and not self.bg_load_running :
+            self.bg_load_running = True
+            self.thread = threading.Thread(target=self.load_all)
+            self.thread.start()
+            
+        if self.thread != None :
+            if self.waiting_for <= idx :
+                self.thread.join()
+            
         return self.process_file(self.paths.fget()[idx])
         
     def dump_source(self, path):
