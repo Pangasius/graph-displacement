@@ -2,7 +2,7 @@ import os.path as osp
 import glob
 
 from torch_geometric.data import Dataset
-from torch_geometric.nn import radius_graph
+from torch_geometric.nn import radius_graph, knn_graph
 import torch
 
 import pickle
@@ -41,7 +41,9 @@ class CellGraphDataset(Dataset):
         self.memorize = inmemory
         self.memory = {}
         
-        self.attributes = ["distance_x", "distance_y", "degree", "velocity_x", "velocity_y", "epsilon", "tau", "v0"]
+        self.attributes = ["distance_x", "distance_y", "degree", "velocity_x", "velocity_y", "epsilon", "tau", "v0", \
+                           "border_xl", "border_xr", "border_yd", "border_yu", \
+                           "avg_radius", "radius"]
         
         assert(inmemory | (not bg_load)) # bg load can't be true alone
         
@@ -103,10 +105,22 @@ class CellGraphDataset(Dataset):
         cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
         #Get position data
         rval = torch.tensor(x.rval)
+        
+        #normalize the data
+        rval_mean = rval.mean(dim=0)
+        rval_std = rval.std(dim=0)
+        
+        rval = (rval - rval_mean) / rval_std
+        
+        border = [rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()]
+        
         #Get time and number of cells from shape of position data
         old_T = rval.shape[0]
-        T = min(rval.shape[0], 128) #limiting for testing
+        T = min(rval.shape[0], 64) #limiting for testing
         N = rval.shape[1]
+        
+        #max degree of a node in the graph, used to normalize the degree
+        max_degree = 8
         
         try :
             assert(T > 1)
@@ -123,7 +137,9 @@ class CellGraphDataset(Dataset):
         rval = rval.reshape(T*N,2)
         #ideally we would like to only have those connections but radius_graph doesn't work on GPU for some reason
         batch = torch.arange(T).repeat_interleave(N).to(torch.long)
-        edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=20)
+        
+        #edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
+        edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=False)
 
         #though for now we will make a completely connected graph
         #edge_index = torch.tensor([[i,j] for i in range(N) for j in range(N) if i!=j]).t()
@@ -147,7 +163,7 @@ class CellGraphDataset(Dataset):
         edge_index_local = torch.zeros_like(edge_index)
         for t in range(T):
             edge_index_local[:, batch_edge == t] = edge_index[:, batch_edge == t] - N*t
-            deg[t, :] = torch.bincount(edge_index_local[0, batch_edge == t], minlength=N)
+            deg[t, :] = torch.bincount(edge_index_local[0, batch_edge == t], minlength=N) / max_degree
             
         #degree of the first node of the pair
         deg = deg.reshape(T*N)
@@ -164,10 +180,18 @@ class CellGraphDataset(Dataset):
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*epsilon), dim=1)
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*v0), dim=1)
         
-        if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long))
+        #since the border wraps around, we need to pass the rectangle corresponding to it
+        edge_attr = torch.cat((edge_attr, torch.tensor(border).reshape(1,4).repeat(edge_attr.shape[0], 1)), dim=1)
         
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long)
+        #to that we will add the average radius given by x.R and the particular radius given by x.radius
+        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*x.param.R), dim=1)
+        radii = torch.tensor(x.radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - x.param.R
+        edge_attr = torch.cat((edge_attr, radii.reshape(-1, 1)), dim=1)
+        
+        if self.memorize :
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std))
+        
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std)
     
     def len(self):
         return len(self.paths.fget())

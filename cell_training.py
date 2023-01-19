@@ -2,8 +2,8 @@ import torch
 
 import torch.nn.functional as F
 
-def run_single(model, data, i, device) :
-    x, edge_index, edge_attr, batch_edges = data.get(i)
+def run_single(model, data, i, device, denormalize = False) :
+    x, edge_index, edge_attr, batch_edges, norm_and_var = data.get(i)
 
     xshape = x.shape
 
@@ -19,10 +19,17 @@ def run_single(model, data, i, device) :
     mask = torch.logical_and(batch_edges > 0, \
                              batch_edges < xshape[0] - 1)
     out = model(x[1:-1], edge_index[:, mask] , edge_attr[mask])
-    
+
     loss = F.mse_loss(out, x[2:])
     
-    return loss, out.detach().cpu(), x[2:].detach().cpu()
+    #denormalize the data
+    out_ = out.clone().detach()
+    x_ = x.clone().detach()
+    if denormalize :
+        out_[:,:,:2] = out_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
+        x_[:,:,:2] = x_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
+
+    return loss, out_.cpu(), x_.cpu()
 
 def test(model, data, device) :
     model.eval()

@@ -19,7 +19,7 @@ class GraphingLoss():
                     self.ax = self.fig.add_subplot(111)
                 
                 self.ax.clear() # type: ignore
-                self.ax.plot(losses) # type: ignore
+                self.ax.plot(self.losses) # type: ignore
                 self.fig.show()
                 self.fig.canvas.draw()
                 self.last_len = len(self.losses)
