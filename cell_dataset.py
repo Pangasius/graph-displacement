@@ -102,7 +102,7 @@ class CellGraphDataset(Dataset):
         v0 = x.param.factive[0]
 
         #cutoff distance defines the interaction radius. You can assume below:
-        cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
+        #cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
         #Get position data
         rval = torch.tensor(x.rval)
         
@@ -119,9 +119,6 @@ class CellGraphDataset(Dataset):
         T = min(rval.shape[0], 64) #limiting for testing
         N = rval.shape[1]
         
-        #max degree of a node in the graph, used to normalize the degree
-        max_degree = 8
-        
         try :
             assert(T > 1)
             assert(N > 1)
@@ -133,26 +130,38 @@ class CellGraphDataset(Dataset):
         else : 
             rd = random.randint(0, old_T - T)
             rval = rval[rd:rd+T, :N, :2]
-
-        rval = rval.reshape(T*N,2)
+        
         #ideally we would like to only have those connections but radius_graph doesn't work on GPU for some reason
         batch = torch.arange(T).repeat_interleave(N).to(torch.long)
         
+        #we will add to rval dx and dy to get the velocity
+        rval = torch.cat((rval, torch.zeros((T, N, 2))), dim=2)
+        for t in range(T-1):
+            rval[t+1, :, 2:4] = rval[t+1, :, :2] - rval[t, :, :2]
+        
+        edge_index, edge_attr, batch_edge = self.get_edges(rval, batch, border, tau, epsilon, v0, x.param.R, x.radius)
+        
+        if self.memorize :
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std))
+        
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std)
+    
+    def get_edges(self, rval, batch, border, tau, epsilon, v0, r, radius):
+        T = rval.shape[0]
+        N = rval.shape[1]
+        
+        #max degree of a node in the graph, used to normalize the degree
+        max_degree = 8
+        rval = rval.reshape(T*N, 4)
         #edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
-        edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=False)
+        edge_index = knn_graph(rval[:,:2], k = max_degree, batch=batch, loop=False)
 
         #though for now we will make a completely connected graph
         #edge_index = torch.tensor([[i,j] for i in range(N) for j in range(N) if i!=j]).t()
         #edge_index = edge_index.repeat(T, 1, 1) #makes the kernel crash if the sizes are not limited
 
         #distance between nodes in x and y where rval[t, i, :] is the position of cell i at time t
-        edge_attr = rval[edge_index[0, :], :] - rval[edge_index[1, :], :]
-        
-        #we will add to rval dx and dy to get the velocity
-        rval = rval.reshape(T,N,2)
-        rval = torch.cat((rval, torch.zeros((T, N, 2))), dim=2)
-        for t in range(T-1):
-            rval[t+1, :, 2:4] = rval[t+1, :, :2] - rval[t, :, :2]
+        edge_attr = rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]
             
         #assumes they are perfectly split already so we need only to check one node for each pair
         batch_edge = edge_index[0, :] // N
@@ -170,6 +179,7 @@ class CellGraphDataset(Dataset):
         edge_attr = torch.cat((edge_attr.reshape(-1, 2), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
         
         #also the difference of velocities
+        rval = rval.reshape(T,N,4)
         edge_attr = torch.cat((edge_attr, torch.zeros((edge_attr.shape[0], 2))), dim=1)
         for t in range(T):
             edge_attr[batch_edge == t, 2] = rval[t, edge_index_local[0, batch_edge == t], 2] - rval[t, edge_index_local[1, batch_edge == t], 2]
@@ -184,14 +194,14 @@ class CellGraphDataset(Dataset):
         edge_attr = torch.cat((edge_attr, torch.tensor(border).reshape(1,4).repeat(edge_attr.shape[0], 1)), dim=1)
         
         #to that we will add the average radius given by x.R and the particular radius given by x.radius
-        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*x.param.R), dim=1)
-        radii = torch.tensor(x.radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - x.param.R
+        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*r), dim=1)
+        if (radius is torch.tensor) :
+            radii = radius[:T,:N].reshape(T*N)[edge_index[0, :]] - r
+        else : 
+            radii = torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - r
         edge_attr = torch.cat((edge_attr, radii.reshape(-1, 1)), dim=1)
         
-        if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std))
-        
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std)
+        return edge_index, edge_attr, batch_edge
     
     def len(self):
         return len(self.paths.fget())

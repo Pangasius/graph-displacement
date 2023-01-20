@@ -134,3 +134,7 @@ dmypy.json
 /data
 
 /sources
+
+model*.pkl
+
+result*.pkl

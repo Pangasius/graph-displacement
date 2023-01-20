@@ -37,3 +37,61 @@ class GraphingLoss():
             raise ValueError("timer must be a positive integer")
         
         threading.Timer(self.timer, self.plot_and_reschedule).start()
+
+#need ffmpeg to run the following
+
+from matplotlib.animation import FuncAnimation
+from IPython import display
+import pickle
+
+def make_animation(saved_result, animation_name) :
+    with open(saved_result, "rb") as f:
+        out, x = pickle.load(f)
+
+    figure = plt.figure()
+    ax = figure.add_subplot(111)
+
+    left = -1 + x[:,:,0].min()
+    right = 1 + x[:,:,0].max()
+    down = -1 + x[:,:,1].min()
+    up = 1 + x[:,:,1].max()
+
+    def AnimationFunction(i):
+        ax.clear()
+        
+        pos_out = out[i, :, :2]
+        pos_x = x[i, :, :2]
+
+        speed_out = out[i, :, 2:]
+        speed_x = x[i, :, 2:]
+
+        #now plot the graph as bubbles to show the difference between the two
+        ax.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="True position")
+        ax.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Predicted position")
+
+        #show an arrow for the speed
+        ax.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
+        ax.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
+        
+        ax.set_xlim(left, right)
+        ax.set_ylim(down, up)
+        
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        
+        ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+
+        ax.legend(["True position", "Predicted position"], loc="upper left")
+
+    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
+
+    #we can show the animation with the following
+    #video = anim_created.to_html5_video()
+    #html = display.HTML(video)
+    #display.display(html)
+
+    #we can recover the animation with the following
+    anim_created.save(animation_name, writer="ffmpeg")
+    
+    # good practice to close the plt object.
+    plt.close()
