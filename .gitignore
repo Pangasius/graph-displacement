@@ -138,3 +138,5 @@ dmypy.json
 model*.pkl
 
 result*.pkl
+
+test*

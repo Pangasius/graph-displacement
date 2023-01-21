@@ -28,7 +28,7 @@ import threading
 """
 
 class CellGraphDataset(Dataset):
-    def __init__(self, root, max_size, transform=None, pre_transform=None, pre_filter=None, rdts=False, inmemory=False, bg_load=False):
+    def __init__(self, root, max_size, transform=None, pre_transform=None, pre_filter=None, rdts=False, inmemory=False, bg_load=False, wrap=False, T_limit=0):
         super().__init__(root, transform, pre_transform, pre_filter)
         
         #path to all the files
@@ -41,9 +41,10 @@ class CellGraphDataset(Dataset):
         self.memorize = inmemory
         self.memory = {}
         
-        self.attributes = ["distance_x", "distance_y", "degree", "velocity_x", "velocity_y", "epsilon", "tau", "v0", \
-                           "border_xl", "border_xr", "border_yd", "border_yu", \
-                           "avg_radius", "radius"]
+        self.attributes = ["distance", "degree", "velocity_x", "velocity_y",\
+                            "epsilon", "tau", "v0", \
+                            "border_xl", "border_xr", "border_yd", "border_yu", \
+                            "avg_radius", "radius", "poly"]
         
         assert(inmemory | (not bg_load)) # bg load can't be true alone
         
@@ -51,6 +52,11 @@ class CellGraphDataset(Dataset):
         self.bg_load_running = False
         self.waiting_for = -1
         self.thread = None
+        
+        #does the world wrap around or not
+        self.wrap = wrap
+        
+        self.T_limit = T_limit
         
     def _download(self):
         pass
@@ -107,16 +113,20 @@ class CellGraphDataset(Dataset):
         rval = torch.tensor(x.rval)
         
         #normalize the data
-        rval_mean = rval.mean(dim=0)
-        rval_std = rval.std(dim=0)
+        rval_min = torch.min(rval, dim=1)[0].min(dim=0)[0]
+        rval_max = torch.max(rval, dim=1)[0].max(dim=0)[0]
+        rval_factor = rval_max - rval_min
         
-        rval = (rval - rval_mean) / rval_std
+        rval = rval /  rval_factor
         
         border = [rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()]
         
         #Get time and number of cells from shape of position data
         old_T = rval.shape[0]
-        T = min(rval.shape[0], 64) #limiting for testing
+        if self.T_limit :
+            T = min(rval.shape[0], self.T_limit) #limiting for testing
+        else :
+            T = rval.shape[0]
         N = rval.shape[1]
         
         try :
@@ -125,7 +135,7 @@ class CellGraphDataset(Dataset):
         except :
             raise Exception("Data unfit for use")
             
-        if not self.rdts :
+        if not self.rdts or not self.T_limit :
             rval = rval[:T, :N, :2]
         else : 
             rd = random.randint(0, old_T - T)
@@ -139,29 +149,44 @@ class CellGraphDataset(Dataset):
         for t in range(T-1):
             rval[t+1, :, 2:4] = rval[t+1, :, :2] - rval[t, :, :2]
         
-        edge_index, edge_attr, batch_edge = self.get_edges(rval, batch, border, tau, epsilon, v0, x.param.R, x.radius)
+        edge_index, edge_attr, batch_edge = self.get_edges(rval, batch, border, tau, epsilon, v0, x.param.R, x.radius, rval_factor, x.param.poly)
         
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std))
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), rval_factor.to(torch.float))
         
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), (rval_mean, rval_std)
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), rval_factor.to(torch.float)
     
-    def get_edges(self, rval, batch, border, tau, epsilon, v0, r, radius):
+    def get_edges(self, rval, batch, border, tau, epsilon, v0, r, radius, rval_factor, poly):
         T = rval.shape[0]
         N = rval.shape[1]
         
-        #max degree of a node in the graph, used to normalize the degree
         max_degree = 8
-        rval = rval.reshape(T*N, 4)
-        #edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
-        edge_index = knn_graph(rval[:,:2], k = max_degree, batch=batch, loop=False)
+        
+        if self.wrap :
+            #we want to project our (theta, phi) coordinates onto a sphere, so we need to convert them to (x, y, z) coordinates
+            #we can do this by using the following equations:
+            #x = r*sin(theta) * cos(phi)
+            #y = r*sin(theta) * sin(phi)
+            #z = r*cos(theta)
+            #we can do this in one line of code
+            positions = rval[:,:,:2] * 2 * 3.14159265358979323846
+            positions = torch.stack((torch.sin(positions[:, :, 0]) * torch.cos(positions[:, :, 1]), torch.sin(positions[:, :, 0]) * torch.sin(positions[:, :, 1]), torch.cos(positions[:, :, 0])), dim=2)
+            
+            positions = positions.reshape(T*N, -1)
+            
+            edge_index = knn_graph(positions, k = max_degree, batch=batch, loop=False)
+            
+            edge_attr = torch.norm(positions[edge_index[0, :], :3] - positions[edge_index[1, :], :3], dim=1)
 
-        #though for now we will make a completely connected graph
-        #edge_index = torch.tensor([[i,j] for i in range(N) for j in range(N) if i!=j]).t()
-        #edge_index = edge_index.repeat(T, 1, 1) #makes the kernel crash if the sizes are not limited
+        else : 
+            rval = rval.reshape(T*N, -1)
+            
+            #max degree of a node in the graph, used to normalize the degree
+            #edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
+            edge_index = knn_graph(rval[:,:2], k = max_degree, batch=batch, loop=False)
 
-        #distance between nodes in x and y where rval[t, i, :] is the position of cell i at time t
-        edge_attr = rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]
+            #distance between nodes in x and y where rval[t, i, :] is the position of cell i at time t
+            edge_attr = torch.norm(rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2], dim=1)
             
         #assumes they are perfectly split already so we need only to check one node for each pair
         batch_edge = edge_index[0, :] // N
@@ -176,7 +201,7 @@ class CellGraphDataset(Dataset):
             
         #degree of the first node of the pair
         deg = deg.reshape(T*N)
-        edge_attr = torch.cat((edge_attr.reshape(-1, 2), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
+        edge_attr = torch.cat((edge_attr.reshape(-1, 1), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
         
         #also the difference of velocities
         rval = rval.reshape(T,N,4)
@@ -194,12 +219,12 @@ class CellGraphDataset(Dataset):
         edge_attr = torch.cat((edge_attr, torch.tensor(border).reshape(1,4).repeat(edge_attr.shape[0], 1)), dim=1)
         
         #to that we will add the average radius given by x.R and the particular radius given by x.radius
-        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*r), dim=1)
-        if (radius is torch.tensor) :
-            radii = radius[:T,:N].reshape(T*N)[edge_index[0, :]] - r
-        else : 
-            radii = torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - r
+        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*r / rval_factor.norm()), dim=1)
+        radii = (torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - r) / rval_factor.norm()
         edge_attr = torch.cat((edge_attr, radii.reshape(-1, 1)), dim=1)
+        
+        #also add the polydispersity
+        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*poly), dim=1)
         
         return edge_index, edge_attr, batch_edge
     

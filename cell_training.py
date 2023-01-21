@@ -4,9 +4,11 @@ import torch.nn.functional as F
 
 from torch_geometric.nn import knn_graph
 
+import random
+
 #this runs a single batch through the model and returns the loss and the output
 def run_single(model, data, i, device, denormalize = False) :
-    x, edge_index, edge_attr, batch_edges, norm_and_var = data.get(i)
+    x, edge_index, edge_attr, batch_edges, factor = data.get(i)
 
     xshape = x.shape
 
@@ -29,8 +31,8 @@ def run_single(model, data, i, device, denormalize = False) :
     if denormalize :
         out_ = out.clone().detach().cpu()
         x_ = x[2:].clone().detach().cpu()
-        out_[:,:,:2] = out_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
-        x_[:,:,:2] = x_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
+        out_[:,:,:2] = out_[:,:,:2] * factor
+        x_[:,:,:2] = x_[:,:,:2] * factor
         
         return loss, out_, x_
     
@@ -39,7 +41,7 @@ def run_single(model, data, i, device, denormalize = False) :
 #this runs a single batch through the model and returns the loss and the output
 #however, it recursively predicts the next step using the previous prediction
 def run_single_recursive(model, data, i, device, denormalize = False) :
-    x, edge_index, edge_attr, batch_edges, norm_and_var = data.get(i)
+    x, edge_index, edge_attr, batch_edges, factor = data.get(i)
 
     xshape = x.shape
 
@@ -68,7 +70,8 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
     tau = edge_attr[0, attributes.index("tau")].cpu()
     epsilon = edge_attr[0, attributes.index("epsilon")].cpu()
     v0 = edge_attr[0, attributes.index("v0")].cpu()
-    r = edge_attr[0, attributes.index("avg_radius")].cpu()
+    r = edge_attr[0, attributes.index("avg_radius")].cpu() * factor.norm()
+    poly = edge_attr[0, attributes.index("poly")].cpu()
     
     #radius is a TxN tensor that we can rebuild from the edge_attr but we can use a 1xN tensor
     radius = torch.zeros((xshape[1])).to(device)
@@ -83,7 +86,7 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
                 continue
         else :
             break
-    radius = radius.unsqueeze(0).cpu().numpy()
+    radius = (radius.unsqueeze(0).cpu() * factor.norm()).numpy()
     
     for current_time in range(1, xshape[0] - 1) :
         out_time = model(input_x.to(device), edge_index.to(device) , edge_attr.to(device))
@@ -92,18 +95,18 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
         
         #from the output we need to rebuild the edge_index and edge_attr
         #since the number of points changes
-        edge_index, edge_attr, batch_edge = data.get_edges(input_x.cpu(), torch.zeros(input_x.shape[1]).cpu(), border, tau, epsilon, v0, r, radius)
+        edge_index, edge_attr, batch_edge = data.get_edges(input_x.cpu(), torch.zeros(input_x.shape[1]).cpu(), border, tau, epsilon, v0, r, radius, factor, poly)
         
         out = torch.cat((out, out_time), dim=0)
         
-    #the loss is only computed for the last step
-    loss = F.mse_loss(out_time, x[-1].unsqueeze(0)) #type: ignore
+    #the loss
+    loss = F.mse_loss(out, x[2:]) #type: ignore
     
     if denormalize :
         out_ = out.clone().detach().cpu()
         x_ = x[2:].clone().detach().cpu()    
-        out_[:,:,:2] = out_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
-        x_[:,:,:2] = x_[:,:,:2] * norm_and_var[1] + norm_and_var[0]
+        out_[:,:,:2] = out_[:,:,:2] * factor
+        x_[:,:,:2] = x_[:,:,:2] * factor
         
         return loss, out_, x_
     
@@ -127,7 +130,7 @@ def train(model, optimizer, scheduler, data, device, epoch, process) :
     model = model.to(device)
     for i in range(data.len()):
         optimizer.zero_grad()
-        
+
         loss, _, _ = run_single(model, data, i, device)
         
         loss.backward()

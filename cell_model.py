@@ -13,13 +13,13 @@ class GraphEvolution(torch.nn.Module):
         assert((edge_dim // heads) * heads == edge_dim)
         
         self.edge_dim = edge_dim
-        self.edge_dim_embed = 6
+        self.edge_dim_embed = 10
         self.channels = in_channels
         self.gat_heads = 8
         
         #first we want to embed the edge_attr from edge_dim to self.edge_dim_embed
         encoder_layer = torch.nn.TransformerEncoderLayer(d_model=edge_dim, nhead=heads, dropout=dropout, batch_first=True, activation=F.elu, dim_feedforward=hidden_channels)
-        self.transformer_encoder = torch.nn.TransformerEncoder(encoder_layer, num_layers=2)
+        self.transformer_encoder = torch.nn.TransformerEncoder(encoder_layer, num_layers=1)
         
         self.encoder_resize = torch.nn.Linear(edge_dim, self.edge_dim_embed)
         
@@ -28,7 +28,7 @@ class GraphEvolution(torch.nn.Module):
             
         #we take the output and convert it to the desired output
         decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.gat_heads*hidden_channels, nhead=self.gat_heads, dropout=dropout, batch_first=True, activation=F.elu, dim_feedforward=hidden_channels)
-        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=2)
+        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=1)
         
         self.decoder_resize = torch.nn.Linear(self.gat_heads*hidden_channels, out_channels)
 
