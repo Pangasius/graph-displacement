@@ -2,13 +2,9 @@ import torch
 
 import torch.nn.functional as F
 
-from torch_geometric.nn import knn_graph
-
-import random
-
 #this runs a single batch through the model and returns the loss and the output
 def run_single(model, data, i, device, denormalize = False) :
-    x, edge_index, edge_attr, batch_edges, factor = data.get(i)
+    x, edge_index, edge_attr, batch_edges, border = data.get(i)
 
     xshape = x.shape
 
@@ -27,21 +23,44 @@ def run_single(model, data, i, device, denormalize = False) :
 
     loss = F.mse_loss(out, x[2:])
     
-    #denormalize the data
     if denormalize :
-        out_ = out.clone().detach().cpu()
-        x_ = x[2:].clone().detach().cpu()
-        out_[:,:,:2] = out_[:,:,:2] * factor
-        x_[:,:,:2] = x_[:,:,:2] * factor
+        factor = torch.stack([border[1] - border[0], border[3] - border[2]]).to(device)
+        min_ = torch.stack([border[0], border[2]]).to(device)
         
-        return loss, out_, x_
-    
-    return loss, None, None
+        out_pos = data.from_torus(out[:,:, 0], out[:,:, 1], out[:,:, 2])
+        
+        out_max = out_pos.max(0)[0].max(0)[0]
+        out_min =  out_pos.min(0)[0].min(0)[0]
+        
+        out_pos = (out_pos - out_min) / (out_max - out_min)
+        out_pos = out_pos * factor + min_
+        
+        out_v = data.from_torus(out[:,:, 3], out[:,:, 4], out[:,:, 5]) 
+        out_v = (out_v - out_min) / (out_max - out_min)
+        out_v = out_v * factor + min_
+        
+        out = torch.cat((out_pos,out_v), dim=2)
+        
+        x_pos = data.from_torus(x[:,:, 0], x[:,:, 1], x[:,:, 2])
+        
+        x_max = x_pos.max(0)[0].max(0)[0]
+        x_min =  x_pos.min(0)[0].min(0)[0]
+        
+        x_pos = (x_pos - x_min) / (x_max - x_min)
+        x_pos = x_pos * factor + min_
+        
+        x_v = data.from_torus(x[:,:, 3], x[:,:, 4], x[:,:, 5])
+        x_v = (x_v - x_min) / (x_max - x_min)
+        x_v = x_v * factor + min_
+        
+        x = torch.cat((x_pos,x_v), dim=2)
+        
+    return loss, out.detach().cpu(), x[2:].detach().cpu()
 
 #this runs a single batch through the model and returns the loss and the output
 #however, it recursively predicts the next step using the previous prediction
 def run_single_recursive(model, data, i, device, denormalize = False) :
-    x, edge_index, edge_attr, batch_edges, factor = data.get(i)
+    x, edge_index, edge_attr, batch_edges, border = data.get(i)
 
     xshape = x.shape
 
@@ -64,14 +83,11 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
     #                       "border_xl", "border_xr", "border_yd", "border_yu", \
     #                       "avg_radius", "radius"]
     attributes = data.attributes
-    
-    border = [edge_attr[0, attributes.index("border_xl")], edge_attr[0, attributes.index("border_xr")], \
-              edge_attr[0, attributes.index("border_yd")], edge_attr[0, attributes.index("border_yu")]]
+
     tau = edge_attr[0, attributes.index("tau")].cpu()
     epsilon = edge_attr[0, attributes.index("epsilon")].cpu()
     v0 = edge_attr[0, attributes.index("v0")].cpu()
-    r = edge_attr[0, attributes.index("avg_radius")].cpu() * factor.norm()
-    poly = edge_attr[0, attributes.index("poly")].cpu()
+    r = edge_attr[0, attributes.index("avg_radius")].cpu()
     
     #radius is a TxN tensor that we can rebuild from the edge_attr but we can use a 1xN tensor
     radius = torch.zeros((xshape[1])).to(device)
@@ -86,7 +102,7 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
                 continue
         else :
             break
-    radius = (radius.unsqueeze(0).cpu() * factor.norm()).numpy()
+    radius = (radius.unsqueeze(0).cpu()).numpy()
     
     for current_time in range(1, xshape[0] - 1) :
         out_time = model(input_x.to(device), edge_index.to(device) , edge_attr.to(device))
@@ -95,22 +111,46 @@ def run_single_recursive(model, data, i, device, denormalize = False) :
         
         #from the output we need to rebuild the edge_index and edge_attr
         #since the number of points changes
-        edge_index, edge_attr, batch_edge = data.get_edges(input_x.cpu(), torch.zeros(input_x.shape[1]).cpu(), border, tau, epsilon, v0, r, radius, factor, poly)
+        edge_index, edge_attr, batch_edge = data.get_edges(input_x.cpu(), torch.zeros(input_x.shape[1]).cpu(), tau, epsilon, v0, r, radius)
         
         out = torch.cat((out, out_time), dim=0)
         
     #the loss
-    loss = F.mse_loss(out, x[2:]) #type: ignore
+    loss = F.mse_loss(out, x[2:])
     
     if denormalize :
-        out_ = out.clone().detach().cpu()
-        x_ = x[2:].clone().detach().cpu()    
-        out_[:,:,:2] = out_[:,:,:2] * factor
-        x_[:,:,:2] = x_[:,:,:2] * factor
+        factor = torch.stack([border[1] - border[0], border[3] - border[2]]).to(device)
+        min_ = torch.stack([border[0], border[2]]).to(device)
         
-        return loss, out_, x_
+        out_pos = data.from_torus(out[:,:, 0], out[:,:, 1], out[:,:, 2])
+        
+        out_max = out_pos.max(0)[0].max(0)[0]
+        out_min =  out_pos.min(0)[0].min(0)[0]
+        
+        out_pos = (out_pos - out_min) / (out_max - out_min)
+        out_pos = out_pos * factor + min_
+        
+        out_v = data.from_torus(out[:,:, 3], out[:,:, 4], out[:,:, 5]) 
+        out_v = (out_v - out_min) / (out_max - out_min)
+        out_v = out_v * factor + min_
+        
+        out = torch.cat((out_pos,out_v), dim=2)
+        
+        x_pos = data.from_torus(x[:,:, 0], x[:,:, 1], x[:,:, 2])
+        
+        x_max = x_pos.max(0)[0].max(0)[0]
+        x_min =  x_pos.min(0)[0].min(0)[0]
+        
+        x_pos = (x_pos - x_min) / (x_max - x_min)
+        x_pos = x_pos * factor + min_
+        
+        x_v = data.from_torus(x[:,:, 3], x[:,:, 4], x[:,:, 5])
+        x_v = (x_v - x_min) / (x_max - x_min)
+        x_v = x_v * factor + min_
+        
+        x = torch.cat((x_pos,x_v), dim=2)
     
-    return loss, None, None
+    return loss, out.detach().cpu(), x[2:].detach().cpu()
 
 
 def test(model, data, device) :

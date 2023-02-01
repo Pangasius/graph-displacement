@@ -5,6 +5,8 @@ from torch_geometric.data import Dataset
 from torch_geometric.nn import radius_graph, knn_graph
 import torch
 
+import numpy as np
+
 import pickle
 import lzma
 
@@ -34,17 +36,14 @@ class CellGraphDataset(Dataset):
         #path to all the files
         self.paths = self.each_path(root, max_size)
         
-        #eandom time-step : reads at random in each file the time-step
-        self.rdts = rdts
-        
         #in memory 
         self.memorize = inmemory
         self.memory = {}
         
-        self.attributes = ["distance", "degree", "velocity_x", "velocity_y",\
+        self.attributes = ["distance_x", "distance_y", "distance_z",\
+                            "degree", "velocity_x", "velocity_y", "velocity_z",\
                             "epsilon", "tau", "v0", \
-                            "border_xl", "border_xr", "border_yd", "border_yu", \
-                            "avg_radius", "radius", "poly"]
+                            "avg_radius", "radius"]
         
         assert(inmemory | (not bg_load)) # bg load can't be true alone
         
@@ -52,9 +51,6 @@ class CellGraphDataset(Dataset):
         self.bg_load_running = False
         self.waiting_for = -1
         self.thread = None
-        
-        #does the world wrap around or not
-        self.wrap = wrap
         
         self.T_limit = T_limit
         
@@ -113,13 +109,11 @@ class CellGraphDataset(Dataset):
         rval = torch.tensor(x.rval)
         
         #normalize the data
-        rval_min = torch.min(rval, dim=1)[0].min(dim=0)[0]
-        rval_max = torch.max(rval, dim=1)[0].max(dim=0)[0]
-        rval_factor = rval_max - rval_min
-        
-        rval = rval /  rval_factor
         
         border = [rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()]
+        
+        #so we want to wrap around so we need the max and min be at 0,1
+        rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
         
         #Get time and number of cells from shape of position data
         old_T = rval.shape[0]
@@ -135,59 +129,65 @@ class CellGraphDataset(Dataset):
         except :
             raise Exception("Data unfit for use")
             
-        if not self.rdts or not self.T_limit :
-            rval = rval[:T, :N, :2]
-        else : 
-            rd = random.randint(0, old_T - T)
-            rval = rval[rd:rd+T, :N, :2]
+        rval = rval[:T,:N,:2]
         
         #ideally we would like to only have those connections but radius_graph doesn't work on GPU for some reason
         batch = torch.arange(T).repeat_interleave(N).to(torch.long)
         
-        #we will add to rval dx and dy to get the velocity
-        rval = torch.cat((rval, torch.zeros((T, N, 2))), dim=2)
-        for t in range(T-1):
-            rval[t+1, :, 2:4] = rval[t+1, :, :2] - rval[t, :, :2]
+        #keep in mind there are distorsions
+        rval = self.to_torus(rval[:,:,0], rval[:,:,1])
         
-        edge_index, edge_attr, batch_edge = self.get_edges(rval, batch, border, tau, epsilon, v0, x.param.R, x.radius, rval_factor, x.param.poly)
+        #we will add to rval dx and dy to get the velocity
+        rval = torch.cat((rval, torch.zeros((T, N, 3))), dim=2)
+        for t in range(T-1):
+            rval[t+1, :, 3:6] = rval[t+1, :, :3] - rval[t, :, :3]
+        
+        edge_index, edge_attr, batch_edge = self.get_edges(rval, batch, tau, epsilon, v0, x.param.R, x.radius)
         
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), rval_factor.to(torch.float))
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), border)
         
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), rval_factor.to(torch.float)
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), border
+
+    #although There is no local isometry (i.e. a map that preserves local distances and angles) between the torus and the unit square, or any flat domain for that matter. This is a consequence of Gauss's Theorema Egregium and the fact that the Gaussian curvature of the torus is not everywhere zero. 
+    #we can use the relations 
+    #x=scos(2πu/s)/w
+    #y=ssin(2πu/s)/w
+    #z=sin(2πv)/w
+    #where w=s2+1−−−−−√−cos(2πv)
+    def to_torus(self,u, v):
+        s = torch.tensor(1.0) # is a 1x1x1 rectangle
+        w = torch.sqrt(s**2 + 1) - torch.cos(2 * np.pi * v)
+        return torch.stack((s * torch.cos(2 * np.pi * u / s) / w, s * torch.sin(2 * np.pi * u / s) / w, torch.sin(2 * np.pi * v) / w), dim=2)
+
+    #can be inverted to 
+    # #u=(s/2π)atan(y/x)
+    # v=sign(z)/2π * acos((z^2 * sqrt(s^2+1) ± sqrt(1−z^2 * s^2)) / sqrt(z^2+1))
+    def from_torus(self,x, y, z):
+        s = torch.tensor(1.0) # is a 1x1x1 rectangle
+        u = (s / (2 * np.pi)) * torch.atan(y / x)
+        v = (torch.sign(z) / (2 * np.pi)) * torch.acos((z**2 * torch.sqrt(s**2 + 1) - torch.sqrt(1 - z**2 * s**2)) / torch.sqrt(z**2 + 1))
+        return torch.stack((u, v), dim=2)
     
-    def get_edges(self, rval, batch, border, tau, epsilon, v0, r, radius, rval_factor, poly):
+    def get_edges(self, rval, batch, tau, epsilon, v0, r, radius):
         T = rval.shape[0]
         N = rval.shape[1]
         
-        max_degree = 8
+        max_degree = 12
         
-        if self.wrap :
-            #we want to project our (theta, phi) coordinates onto a sphere, so we need to convert them to (x, y, z) coordinates
-            #we can do this by using the following equations:
-            #x = r*sin(theta) * cos(phi)
-            #y = r*sin(theta) * sin(phi)
-            #z = r*cos(theta)
-            #we can do this in one line of code
-            positions = rval[:,:,:2] * 2 * 3.14159265358979323846
-            positions = torch.stack((torch.sin(positions[:, :, 0]) * torch.cos(positions[:, :, 1]), torch.sin(positions[:, :, 0]) * torch.sin(positions[:, :, 1]), torch.cos(positions[:, :, 0])), dim=2)
-            
-            positions = positions.reshape(T*N, -1)
-            
-            edge_index = knn_graph(positions, k = max_degree, batch=batch, loop=False)
-            
-            edge_attr = torch.norm(positions[edge_index[0, :], :3] - positions[edge_index[1, :], :3], dim=1)
-
-        else : 
-            rval = rval.reshape(T*N, -1)
-            
-            #max degree of a node in the graph, used to normalize the degree
-            #edge_index = radius_graph(rval, r=cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
-            edge_index = knn_graph(rval[:,:2], k = max_degree, batch=batch, loop=False)
-
-            #distance between nodes in x and y where rval[t, i, :] is the position of cell i at time t
-            edge_attr = torch.norm(rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2], dim=1)
-            
+        #we want to project our (theta, phi) coordinates onto a sphere, so we need to convert them to (x, y, z) coordinates
+        #we can do this by using the following equations:
+        #x = r*sin(theta) * cos(phi)
+        #y = r*sin(theta) * sin(phi)
+        #z = r*cos(theta)
+        #we can do this in one line of code
+        
+        rval = rval.reshape(T*N, -1)
+        
+        edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=False)
+        
+        edge_attr = (rval[edge_index[0, :], :3] - rval[edge_index[1, :], :3]).reshape(-1,3)
+        
         #assumes they are perfectly split already so we need only to check one node for each pair
         batch_edge = edge_index[0, :] // N
 
@@ -201,30 +201,27 @@ class CellGraphDataset(Dataset):
             
         #degree of the first node of the pair
         deg = deg.reshape(T*N)
-        edge_attr = torch.cat((edge_attr.reshape(-1, 1), deg[edge_index[0, :]].reshape(-1, 1)), dim=1)
+        edge_attr = torch.cat((edge_attr.reshape(-1, 3), deg[edge_index[0, :]].reshape(-1, 1)), dim=1).reshape(-1,4)
         
         #also the difference of velocities
-        rval = rval.reshape(T,N,4)
-        edge_attr = torch.cat((edge_attr, torch.zeros((edge_attr.shape[0], 2))), dim=1)
+        rval = rval.reshape(T,N,-1)
+        edge_attr = torch.cat((edge_attr, torch.zeros((edge_attr.shape[0], 3))), dim=1)
         for t in range(T):
-            edge_attr[batch_edge == t, 2] = rval[t, edge_index_local[0, batch_edge == t], 2] - rval[t, edge_index_local[1, batch_edge == t], 2]
-            edge_attr[batch_edge == t, 3] = rval[t, edge_index_local[0, batch_edge == t], 3] - rval[t, edge_index_local[1, batch_edge == t], 3]
-            
+            edge_attr[batch_edge == t, -3:] = rval[t, edge_index_local[0, batch_edge == t], 3:6] - rval[t, edge_index_local[1, batch_edge == t], 3:6]
+
         #add tau, epsilon and v0
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*tau), dim=1)
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*epsilon), dim=1)
         edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*v0), dim=1)
         
-        #since the border wraps around, we need to pass the rectangle corresponding to it
-        edge_attr = torch.cat((edge_attr, torch.tensor(border).reshape(1,4).repeat(edge_attr.shape[0], 1)), dim=1)
-        
         #to that we will add the average radius given by x.R and the particular radius given by x.radius
-        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*r / rval_factor.norm()), dim=1)
-        radii = (torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - r) / rval_factor.norm()
+        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*r), dim=1)
+        radii = (torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) - r)
         edge_attr = torch.cat((edge_attr, radii.reshape(-1, 1)), dim=1)
         
         #also add the polydispersity
-        edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*poly), dim=1)
+        #edge_attr = torch.cat((edge_attr, torch.ones((edge_attr.shape[0], 1))*poly), dim=1)
+        assert(edge_attr.shape[1] == 12)
         
         return edge_index, edge_attr, batch_edge
     

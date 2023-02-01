@@ -2,6 +2,8 @@ import threading
 
 import matplotlib.pyplot as plt
 
+import torch
+
 class GraphingLoss():
     def __init__(self, losses):
         self.losses = losses
@@ -95,3 +97,24 @@ def make_animation(saved_result, animation_name) :
     
     # good practice to close the plt object.
     plt.close()
+    
+def show_torus(data) :
+    #make a square with 2d points
+    a = torch.stack(torch.meshgrid(torch.linspace(0, 1, 10), torch.linspace(0, 1, 10), indexing='ij'), dim=2).reshape(-1, 2).unsqueeze(0)
+
+    a3 = data.to_torus(a[:, :, 0], a[:, :, 1])
+
+    plot = plt.figure()
+    ax = plot.add_subplot(111, projection='3d')
+    ax.scatter(a3[0,:,0], a3[0,:,1], a3[0,:,2])
+
+    #reverse
+    a2 = data.from_torus(a3[:, :, 0], a3[:, :, 1], a3[:, :, 2])
+    #normalise
+    a2 = (a2 - a2.min(0)[0].min(0)[0]) / (a2.max(0)[0].max(0)[0] - a2.min(0)[0].min(0)[0])
+
+    #difference
+    plat = plt.figure()
+    ax = plat.add_subplot(111)
+    ax.scatter(a2[0,:,0], a2[0,:,1], c='r', alpha=0.5)
+    ax.scatter(a[0,:,0], a[0,:,1], c='b', alpha=0.5)
