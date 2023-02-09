@@ -21,7 +21,9 @@ class GraphingLoss():
                     self.ax = self.fig.add_subplot(111)
                 
                 self.ax.clear() # type: ignore
-                self.ax.plot(self.losses) # type: ignore
+                self.ax.plot(self.losses[::2], label="Recursive Loss") # type: ignore
+                self.ax.plot(self.losses[1::2], label="Static loss") # type: ignore
+                self.ax.legend(["True position", "Predicted position"], loc="upper left")
                 self.fig.show()
                 self.fig.canvas.draw()
                 self.last_len = len(self.losses)
@@ -53,10 +55,10 @@ def make_animation(saved_result, animation_name) :
     figure = plt.figure()
     ax = figure.add_subplot(111)
 
-    left = -1 + x[:,:,0].min()
-    right = 1 + x[:,:,0].max()
-    down = -1 + x[:,:,1].min()
-    up = 1 + x[:,:,1].max()
+    left = x[:,:,0].min()
+    right = x[:,:,0].max()
+    down = x[:,:,1].min()
+    up = x[:,:,1].max()
 
     def AnimationFunction(i):
         ax.clear()
@@ -97,24 +99,3 @@ def make_animation(saved_result, animation_name) :
     
     # good practice to close the plt object.
     plt.close()
-    
-def show_torus(data) :
-    #make a square with 2d points
-    a = torch.stack(torch.meshgrid(torch.linspace(0, 1, 10), torch.linspace(0, 1, 10), indexing='ij'), dim=2).reshape(-1, 2).unsqueeze(0)
-
-    a3 = data.to_torus(a[:, :, 0], a[:, :, 1])
-
-    plot = plt.figure()
-    ax = plot.add_subplot(111, projection='3d')
-    ax.scatter(a3[0,:,0], a3[0,:,1], a3[0,:,2])
-
-    #reverse
-    a2 = data.from_torus(a3[:, :, 0], a3[:, :, 1], a3[:, :, 2])
-    #normalise
-    a2 = (a2 - a2.min(0)[0].min(0)[0]) / (a2.max(0)[0].max(0)[0] - a2.min(0)[0].min(0)[0])
-
-    #difference
-    plat = plt.figure()
-    ax = plat.add_subplot(111)
-    ax.scatter(a2[0,:,0], a2[0,:,1], c='r', alpha=0.5)
-    ax.scatter(a[0,:,0], a[0,:,1], c='b', alpha=0.5)
