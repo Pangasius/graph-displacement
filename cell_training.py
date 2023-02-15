@@ -8,75 +8,67 @@ from cell_model import GraphEvolution
 import psutil
 
 #this runs a single batch through the model and returns the loss and the output
-def run_single(model : GraphEvolution, data : CellGraphDataset , i : int, device : torch.device, duration : int | None = None) :
-    x, edge_index, edge_attr, batch_edges, border, params = data.get(i)
+def run_single(model : GraphEvolution, data , i : int, device : torch.device, duration : int = -1, output = False) :
+    x, edge_index, edge_attr, border, params, cutoff = data.get(i)
 
     xshape = x.shape
-
-    x = x.to(device)
+    
     edge_index = edge_index.to(device)
     edge_attr = edge_attr.to(device)
-    batch_edges = batch_edges.to(device)
-    
-    if duration is None or duration > xshape[0] - 2 or duration < 1 :
+    x = x.to(device)
+    params = params.to(device)
+
+    if duration > xshape[0] - 2 or duration < 1 :
         duration = xshape[0] - 2
 
     #we don't want to predict the last step since we wouldn't have the data for the loss
     #and for the first point we don't have the velocity
-    mask = torch.logical_and(batch_edges > 0, \
-                             batch_edges < duration + 1)
+    mask = torch.logical_and(torch.div(edge_index[0, :], xshape[1], rounding_mode='floor') > 0, \
+                             torch.div(edge_index[0, :], xshape[1], rounding_mode='floor') < duration + 1)
     
-    out = model(x[1:duration+1], edge_index[:, mask] - xshape[1], edge_attr[mask], params)
+    edge_index = (edge_index[:, mask] - xshape[1])
     
-    factor = torch.stack([border[1] - border[0], border[3] - border[2]]).repeat(2).to(device)
-    min_ = torch.cat((torch.stack([border[0], border[2]]), torch.zeros(2))).to(device)
+    out = model(x[1:duration+1], edge_index, edge_attr[mask], params)
+    
+    loss, out = model.loss_direct(out, x[2:duration + 2,:, :4])
+    
+    if output :
+        factor = torch.stack([border[1] - border[0], border[3] - border[2]]).repeat(2).to(device)
+        min_ = torch.cat((torch.stack([border[0], border[2]]), torch.zeros(2))).to(device)
 
-    out = out * factor + min_
-    x = x * factor + min_
-
-    loss = F.mse_loss(out, x[2:duration + 2])
+        out = (out * factor + min_).detach().cpu()
+        x = (x[2:duration + 2,:,:4] * factor + min_).detach().cpu()
         
-    return loss, out.detach().cpu(), x[2:duration + 2].detach().cpu()
+        return loss, out, x
+    else :
+        return loss, None, None
 
 #this runs a single batch through the model and returns the loss and the output
 #however, it recursively predicts the next step using the previous prediction
-def run_single_recursive(model : GraphEvolution, data : CellGraphDataset , i : int, device : torch.device, duration : int | None  = None) :
-    x, edge_index, edge_attr, batch_edges, border, params = data.get(i)
+def run_single_recursive(model : GraphEvolution, data, i : int, device : torch.device,  duration : int = -1, output=False) :
+    x, edge_index, edge_attr, border, params, cutoff = data.get(i)
 
     xshape = x.shape
 
-    x = x.to(device)
+    edge_index = edge_index.to(device)
+    edge_attr = edge_attr.to(device)
+    params = params.to(device)
+
 
     #we don't want to predict the last step since we wouldn't have the data for the loss
     #and for the first point we don't have the velocity
     input_x = x[1].unsqueeze(dim=0).to(device)
     out = torch.tensor([]).to(device)
-    mask = batch_edges == 0
+    mask = torch.div(edge_index[0, :], xshape[1], rounding_mode='floor') == 0
     edge_index = edge_index[:, mask].to(device)
     edge_attr = edge_attr[mask].to(device)
     
-    attributes = data.attributes
-
-    r = edge_attr[0, attributes.index("avg_radius")].cpu().item()
-    
-    #radius is a TxN tensor that we can rebuild from the edge_attr but we can use a 1xN tensor
-    radius = torch.zeros((xshape[1])).to(device)
-    counter = 0
-    #using the fact that the tensor is complete
-    for j in range (0,edge_attr.shape[0]) :
-        if edge_index[0,j] == counter :
-            radius[counter] = edge_attr[j, params[3].long()] * r
-            counter = counter + 1
-        else :
-            continue
-
-    radius = (radius.unsqueeze(0).cpu()).numpy()
-    
-    if duration is None or duration > xshape[0] - 2 or duration < 1 :
+    if duration > xshape[0] - 2 or duration < 1 :
         duration = xshape[0] - 2
     
     for current_time in range(1, 1 + duration) :
-        input_x = model(input_x.to(device), edge_index.to(device), edge_attr.to(device), params.to(device))
+        
+        input_x = model(input_x.to(device), edge_index.to(device), edge_attr.to(device), params)
         
         out = torch.cat((out, input_x), dim=0)
         
@@ -86,25 +78,27 @@ def run_single_recursive(model : GraphEvolution, data : CellGraphDataset , i : i
         
         #from the output we need to rebuild the edge_index and edge_attr
         #since the number of points changes
-        next_val, edge_index, edge_attr = data.get_edges(input_x[:,:,:2].cpu(), data.max_degree, wrap=True, T=1, N=xshape[1])
-        edge_attr, batch_edge = data.get_edges_attributes(edge_index, edge_attr, data.max_degree, r, radius, T=1, N=xshape[1])
+        sample = model.draw(input_x.cpu())
+        input_x, edge_index, edge_attr = data.get_edges(sample[:,:,:2].cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
         
-        #get_edges_attributes will return the actual velocities and we do not want them
-        input_x[:,:,:2] = next_val[:,:,:2]
-        
-    factor = torch.stack([border[1] - border[0], border[3] - border[2]]).repeat(2).to(device)
-    min_ = torch.cat((torch.stack([border[0], border[2]]), torch.zeros(2))).to(device)
-
-    out = out * factor + min_
-    x = x * factor + min_
+        input_x[:,:,2:4] = sample[:,:,2:4]
         
     #the loss
-    loss = F.mse_loss(out, x[2:duration + 2])
+    loss, out = model.loss_direct(out, x[2:duration + 2,:, :4])
     
-    return loss, out.detach().cpu(), x[2:duration + 2].detach().cpu()
+    if output :
+        factor = torch.stack([border[1] - border[0], border[3] - border[2]]).repeat(2).to(device)
+        min_ = torch.cat((torch.stack([border[0], border[2]]), torch.zeros(2))).to(device)
+    
+        out = (out.to(device) * factor + min_).detach().cpu()
+        x = (x[2:duration + 2,:,:4].to(device) * factor + min_).detach().cpu()
+        
+        return loss, out, x
+    else :
+        return loss, None, None
 
 
-def test(model : GraphEvolution, data : CellGraphDataset, device : torch.device, method = run_single, duration : int | None = None) :
+def test(model : GraphEvolution, data : CellGraphDataset, device : torch.device, method = run_single, duration : int = -1) :
     model.eval()
     model = model.to(device)
     with torch.no_grad():
@@ -116,7 +110,7 @@ def test(model : GraphEvolution, data : CellGraphDataset, device : torch.device,
             
         return loss_sum / data.len()
     
-def evaluate(model : GraphEvolution, data : CellGraphDataset, device : torch.device, method = run_single, duration : int | None = None) :
+def evaluate(model : GraphEvolution, data : CellGraphDataset, device : torch.device, method = run_single, duration : int = -1) :
     model.eval()
     model = model.to(device)
     with torch.no_grad():
@@ -125,8 +119,8 @@ def evaluate(model : GraphEvolution, data : CellGraphDataset, device : torch.dev
         for i in range(data.len()):
             loss, out, x = method(model, data, i, device, duration=duration)
             
-            inertia_prediction = torch.cat((out[:,:,:2], out[:,:,:2] + out[:,:,2:]) , dim=2)
-            inertia_actual = torch.cat((x[:,:,:2], x[:,:,:2] + x[:,:,2:]), dim=2)
+            inertia_prediction = torch.cat((out[:,:,:2], out[:,:,:2] + out[:,:,2:]) , dim=2) #type: ignore
+            inertia_actual = torch.cat((x[:,:,:2], x[:,:,:2] + x[:,:,2:]), dim=2) #type: ignore
             
             similarity.append(F.cosine_similarity(inertia_prediction, inertia_actual, dim=2).mean().item())
             
@@ -163,7 +157,7 @@ def train(model : GraphEvolution, optimizer : torch.optim.Optimizer, scheduler :
             duration = int(torch.randint(low=1, high=int(torch.ceil(probability * 10).item()), size = (1,)).item())
             method = run_single_recursive
         else :
-            duration = None
+            duration = -1
             method = run_single
 
         loss, _, _ = method(model, data, i, device, duration=duration) 

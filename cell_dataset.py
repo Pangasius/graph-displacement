@@ -2,10 +2,8 @@ import os.path as osp
 import glob
 
 from torch_geometric.data import Dataset
-from torch_geometric.nn import radius_graph, knn_graph
+from torch_geometric.nn import radius_graph, radius_graph
 import torch
-
-import numpy as np
 
 import pickle
 import lzma
@@ -38,9 +36,7 @@ class CellGraphDataset(Dataset):
         self.memorize = inmemory
         self.memory = {}
         
-        self.attributes = ["distance_x", "distance_y",\
-                            "degree",\
-                            "avg_radius"]
+        self.attributes = ["distance_x", "distance_y"]
         
         assert(inmemory | (not bg_load)) # bg load can't be true alone
         
@@ -103,7 +99,7 @@ class CellGraphDataset(Dataset):
         v0 = x.param.factive[0]
 
         #cutoff distance defines the interaction radius. You can assume below:
-        #cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
+        cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
         #Get position data
         rval = torch.tensor(x.rval)
         
@@ -113,6 +109,8 @@ class CellGraphDataset(Dataset):
         
         #so we want to wrap around so we need the max and min be at 0,1
         rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
+        
+        cutoff = cutoff / (border[1] - border[0])
         
         #Get time and number of cells from shape of position data
         if self.T_limit :
@@ -129,32 +127,30 @@ class CellGraphDataset(Dataset):
             
         rval = rval[:T,:N,:2]
         
-
-        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=True, T=T, N=N)
-        edge_attr, batch_edge = self.get_edges_attributes(edge_index, edge_attr, self.max_degree, x.param.R, x.radius, T=T, N=N)
+        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=True, T=T, N=N, cutoff=cutoff)
 
         #additional parameters : tau, epsilon, v0, r
         params = torch.tensor([tau, epsilon, v0, x.param.R]).to(torch.float)
         
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), border, params)
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff)
 
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), batch_edge.to(torch.long), border, params
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff
     
     @staticmethod
-    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int) :
+    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, cutoff : float) :
 
         if not wrap :
             batch = torch.arange(T).repeat_interleave(N).to(torch.long)
         
             rval = rval.reshape(T*N, -1)
             
-            edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=False)
+            edge_index = radius_graph(rval, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
             
             edge_attr = (rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]).reshape(-1,2)
         else :
             #if the world wraps around itself, we need to copy the rval and translate it by 1 in each direction
-            #we will then use the knn_graph to find the nearest neighbors
+            #we will then use the radius_graph to find the nearest neighbors
 
             rval_expanded = torch.cat((rval, rval + torch.tensor([1, 0]), rval - torch.tensor([1, 0]), rval + torch.tensor([0, 1]), rval - torch.tensor([0, 1]), rval + torch.tensor([1, 1]), rval - torch.tensor([1, 1]), rval + torch.tensor([1, -1]), rval - torch.tensor([1, -1])), dim=1)
         
@@ -162,7 +158,7 @@ class CellGraphDataset(Dataset):
             
             batch = torch.arange(T).repeat_interleave(N * 9).to(torch.long)
         
-            edge_index = knn_graph(rval_expanded, k = max_degree, loop=False, batch=batch, num_workers=2)
+            edge_index = radius_graph(rval_expanded, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree, num_workers=2)
         
             edges_final = torch.zeros((2, 0), dtype=torch.long)
             for j in range(T) :
@@ -191,32 +187,13 @@ class CellGraphDataset(Dataset):
         if wrap :
             #substract 1 to the speeds if they are greater than 0.5
             rval[:,:,2:] = rval[:,:,2:] - (rval[:,:,2:] > 0.5).float() + (rval[:,:,2:] < -0.5).float()
+            
+        #add the degree of each node using the edge_index
+        rval = torch.cat((rval, torch.zeros((T, N, 1), dtype=torch.float)), dim=2)
+        rval[:,:,4] = torch.bincount(edge_index[0, :], minlength=T*N).reshape(T, N)
+        
         
         return rval, edge_index, edge_attr
-    
-    @staticmethod
-    def get_edges_attributes(edge_index : torch.Tensor, edge_attr : torch.Tensor, max_degree : int, r : int | float, radius : torch.Tensor, T : int, N : int):
-        
-        #assumes they are perfectly split already so we need only to check one node for each pair
-        batch_edge = edge_index[0, :] // N
-        
-        #we will also add the degree of the first node of the pair
-        #degree of each node
-        deg = torch.zeros((T, N))
-        edge_index_local = torch.zeros_like(edge_index)
-        for t in range(T):
-            edge_index_local[:, batch_edge == t] = edge_index[:, batch_edge == t] - N*t
-            deg[t, :] = torch.bincount(edge_index_local[0, batch_edge == t], minlength=N) / max_degree
-            
-        #degree of the first node of the pair
-        deg = deg.reshape(T*N)
-        edge_attr = torch.cat((edge_attr.reshape(-1, 2), deg[edge_index[0, :]].reshape(-1, 1)), dim=1).reshape(-1,3)
-
-        #radius of each cell
-        radii = (torch.tensor(radius[:T,:N].reshape(T*N)[edge_index[0, :]]) / r)
-        edge_attr = torch.cat((edge_attr, radii.reshape(-1, 1)), dim=1)
-        
-        return edge_attr, batch_edge
     
     def len(self):
         return len(self.paths.fget())
@@ -261,3 +238,26 @@ class CellGraphDataset(Dataset):
         else :
             #overwrite the paths to the previous configuration
             self._overwrite_source("sources/" + path)
+            
+class ArtificialDataset(Dataset):
+    def __init__(self, N, T):
+        self.N = N
+        self.T = T
+        
+        self.max_degree = 5
+    
+    def len(self):
+        return 1
+    
+    #rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff
+    def get(self, idx):
+        edges = torch.randint(0, self.N, (2, 5*self.N)).repeat(1, self.T)
+        edges[0, :] += torch.arange(self.T).repeat_interleave(5*self.N) * self.N
+        edges[1, :] += torch.arange(self.T).repeat_interleave(5*self.N) * self.N
+        return torch.rand(self.T, self.N, 4), edges, torch.rand(5 * self.N * self.T, 2), torch.arange(4), torch.zeros(4), 0.5
+
+    def get_edges(self, rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, cutoff : float) :        
+        edges = torch.randint(0, N, (2, 5*N)).repeat(1, T)
+        edges[0, :] += torch.arange(T).repeat_interleave(5*N) * N
+        edges[1, :] += torch.arange(T).repeat_interleave(5*N) * N
+        return torch.rand(T, N, 4), edges, torch.rand(5 * N * T, 2)

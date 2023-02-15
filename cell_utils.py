@@ -23,7 +23,7 @@ class GraphingLoss():
                 self.ax.clear() # type: ignore
                 self.ax.plot(self.losses[::2], label="Recursive Loss") # type: ignore
                 self.ax.plot(self.losses[1::2], label="Static loss") # type: ignore
-                self.ax.legend(["True position", "Predicted position"], loc="upper left")
+                self.ax.legend(["Recursive Loss", "Static loss"], loc="upper left") # type: ignore
                 self.fig.show()
                 self.fig.canvas.draw()
                 self.last_len = len(self.losses)
@@ -48,7 +48,7 @@ from matplotlib.animation import FuncAnimation
 from IPython import display
 import pickle
 
-def make_animation(saved_result, animation_name) :
+def make_animation(saved_result, animation_name, show_speed = True) :
     with open(saved_result, "rb") as f:
         out, x = pickle.load(f)
 
@@ -66,16 +66,17 @@ def make_animation(saved_result, animation_name) :
         pos_out = out[i, :, :2]
         pos_x = x[i, :, :2]
 
-        speed_out = out[i, :, 2:]
-        speed_x = x[i, :, 2:]
-
         #now plot the graph as bubbles to show the difference between the two
         ax.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="True position")
         ax.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Predicted position")
 
-        #show an arrow for the speed
-        ax.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
-        ax.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
+        if show_speed :
+            speed_out = out[i, :, 2:]
+            speed_x = x[i, :, 2:]
+
+            #show an arrow for the speed
+            ax.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
+            ax.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
         
         ax.set_xlim(left, right)
         ax.set_ylim(down, up)
@@ -89,6 +90,51 @@ def make_animation(saved_result, animation_name) :
 
     anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
 
+    #we can show the animation with the following
+    #video = anim_created.to_html5_video()
+    #html = display.HTML(video)
+    #display.display(html)
+
+    #we can recover the animation with the following
+    anim_created.save(animation_name, writer="ffmpeg")
+    
+    # good practice to close the plt object.
+    plt.close()
+    
+
+def singleCellTrajectoryAnimation(saved_result, animation_name, show_speed = True) :
+    with open(saved_result, "rb") as f:
+        out, x = pickle.load(f)
+
+    figure = plt.figure()
+    ax = figure.add_subplot(111)
+
+    left = x[:,:,0].min()
+    right = x[:,:,0].max()
+    down = x[:,:,1].min()
+    up = x[:,:,1].max()
+    
+    trajectory = x[:, 0, :2]
+    prediction = out[:, 0, :2]
+    
+    def AnimationFunction(i) :
+        ax.clear()
+        
+        ax.plot(trajectory[:i, 0], trajectory[:i, 1], c='b', alpha=0.5, label="True trajectory")
+        ax.plot(prediction[:i, 0], prediction[:i, 1], c='r', alpha=0.5, label="Predicted trajectory")
+        
+        ax.set_xlim(left, right)
+        ax.set_ylim(down, up)
+        
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        
+        ax.set_title("Cell trajectory (position) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+        
+        ax.legend(["True trajectory", "Predicted trajectory"], loc="upper left")
+        
+    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
+    
     #we can show the animation with the following
     #video = anim_created.to_html5_video()
     #html = display.HTML(video)
