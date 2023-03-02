@@ -3,6 +3,7 @@ import threading
 import matplotlib.pyplot as plt
 
 import torch
+import numpy as np
 
 class GraphingLoss():
     def __init__(self, losses):
@@ -22,11 +23,10 @@ class GraphingLoss():
                 
                 self.ax.clear() # type: ignore
                 self.ax.plot(self.losses[::2], label="Recursive Loss") # type: ignore
-                self.ax.plot(self.losses[1::2], label="Static loss") # type: ignore
-                self.ax.legend(["Recursive Loss", "Static loss"], loc="upper left") # type: ignore
-                self.fig.show()
+                self.ax.plot(self.losses[1::2], label="Iterative loss") # type: ignore
+                self.ax.legend(["Recursive Loss", "Iterative loss"], loc="upper left") # type: ignore
                 self.fig.canvas.draw()
-                self.last_len = len(self.losses)
+                self.last_len = len(self.losses) // 2
                 
                 plt.savefig("Losses.pdf", format="pdf")
 
@@ -49,8 +49,12 @@ from IPython import display
 import pickle
 
 def make_animation(saved_result, animation_name, show_speed = True) :
-    with open(saved_result, "rb") as f:
-        out, x = pickle.load(f)
+    
+    if isinstance(saved_result, str) :
+        with open(saved_result, "rb") as f:
+            out, x = pickle.load(f)
+    else :
+        out, x = saved_result
 
     figure = plt.figure()
     ax = figure.add_subplot(111)

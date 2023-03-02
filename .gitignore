@@ -136,7 +136,9 @@ dmypy.json
 /sources
 
 model*.pkl
+model*.pt
 
 result*.pkl
+loss*.pkl
 
 test*

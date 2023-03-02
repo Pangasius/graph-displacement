@@ -47,7 +47,7 @@ class CellGraphDataset(Dataset):
         
         self.T_limit = T_limit
         
-        self.max_degree = 5
+        self.max_degree = 10
         
     def _download(self):
         pass
@@ -216,6 +216,7 @@ class CellGraphDataset(Dataset):
         if self.thread != None :
             if self.waiting_for <= idx :
                 self.thread.join()
+                self.thread=None
             
         return self.process_file(self.paths.fget()[idx])
         
