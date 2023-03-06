@@ -140,5 +140,6 @@ model*.pt
 
 result*.pkl
 loss*.pkl
+Params*.pdf
 
 test*
