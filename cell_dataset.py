@@ -25,13 +25,44 @@ import threading
 23422   ./p058_r000_sb020_2147623_b134_fast4p.p
 """
 
+def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=False, T_limit=0):
+    """
+    root: root directory
+    train_size: number of training examples
+    test_size: number of test examples
+    val_size: number of validation examples
+    max_size: max number of examples to use
+    inmemory: if true, load all data into memory
+    bg_load: if true, load data in the background
+    wrap: if true, wrap the data
+    T_limit: if > 0, limit the number of time steps to T_limit
+    """
+    #get all the files
+    relative = [s.replace('\\', '/') for s in glob.glob(str(root) + '/*interaction.p*')]
+    max_size = min(max_size, len(relative))
+    relative = relative[:max_size]
+    absolute = [osp.abspath(s) for s in relative]
+    absolute.sort(key=hash)
+    
+    #split into train, test, val
+    train = absolute[:int(0.8*len(absolute))]
+    test = absolute[int(0.8*len(absolute)):int(0.9*len(absolute))]
+    val = absolute[int(0.9*len(absolute)):]
+    
+    #create the datasets
+    train_dataset = CellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    test_dataset = CellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    val_dataset = CellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    
+    return train_dataset, test_dataset, val_dataset
+
 class CellGraphDataset(Dataset):
-    def __init__(self, root, max_size, transform=None, pre_transform=None, pre_filter=None, rdts=False, inmemory=False, bg_load=False, wrap=False, T_limit=0):
+    def __init__(self, root : str | list[str], max_size : int , transform=None, pre_transform=None, pre_filter=None, inmemory=False, bg_load=False, wrap=False, T_limit=0):
         super().__init__(root, transform, pre_transform, pre_filter) # type: ignore 
        
         #path to all the files
         self.paths = self.each_path(root, max_size)
-        
+
         #in memory 
         self.memorize = inmemory
         self.memory = {}
@@ -49,6 +80,8 @@ class CellGraphDataset(Dataset):
         
         self.max_degree = 10
         
+        self.wrap = wrap
+        
     def _download(self):
         pass
 
@@ -56,10 +89,14 @@ class CellGraphDataset(Dataset):
         pass
 
     class each_path():
-        def __init__(self, root, max_size):
+        def __init__(self, root : str | list[str], max_size : int):
             self.root = root
             self.max_size = max_size
-            self._each_path = self.read()
+            
+            if type(root) is str:
+                self._each_path = self.read()
+            else :
+                self._each_path = root
             
         def read(self):
             relative = [s.replace('\\', '/') for s in glob.glob(str(self.root) + '/*fast4p.p*')]
@@ -74,7 +111,7 @@ class CellGraphDataset(Dataset):
         def fget(self):
             return self._each_path
         
-    def process_file(self, path):
+    def process_file(self, path : str):
         if self.memory.get(path) is None :
             if path.endswith(".p") :
                 with open(path, 'rb') as f:
@@ -89,7 +126,7 @@ class CellGraphDataset(Dataset):
             
         else :
             return self.memory[path]
-            
+             
         # Parameters of interest: 
         #Attraction force: 
         epsilon = x.param.pairatt[0][0]
@@ -97,6 +134,8 @@ class CellGraphDataset(Dataset):
         tau = x.param.tau[0]
         # Active force
         v0 = x.param.factive[0]
+        
+        big_R = x.param.R
 
         #cutoff distance defines the interaction radius. You can assume below:
         cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
@@ -107,10 +146,18 @@ class CellGraphDataset(Dataset):
         
         border = [rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()]
         
-        #so we want to wrap around so we need the max and min be at 0,1
-        rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
+        mean = torch.tensor([rval[:,:,0].mean(), rval[:,:,1].mean()])
+        std = torch.tensor([rval[:,:,0].std(), rval[:,:,1].std()])
         
-        cutoff = cutoff / (border[1] - border[0])
+        if self.wrap :
+            rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
+        
+            cutoff = cutoff / (border[1] - border[0])
+        else : 
+            
+            rval = (rval - mean) / std
+            
+            cutoff = cutoff / std.mean()
         
         #Get time and number of cells from shape of position data
         if self.T_limit :
@@ -127,10 +174,12 @@ class CellGraphDataset(Dataset):
             
         rval = rval[:T,:N,:2]
         
-        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=True, T=T, N=N, cutoff=cutoff)
+        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=self.wrap, T=T, N=N, cutoff=cutoff)
 
         #additional parameters : tau, epsilon, v0, r
-        params = torch.tensor([tau, epsilon, v0, x.param.R]).to(torch.float)
+        params = torch.tensor([tau, epsilon, v0, big_R])
+        
+        params = torch.cat((params, mean, std, torch.tensor([cutoff])), dim=0).to(torch.float)
         
         if self.memorize :
             self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff)
@@ -239,26 +288,3 @@ class CellGraphDataset(Dataset):
         else :
             #overwrite the paths to the previous configuration
             self._overwrite_source("sources/" + path)
-            
-class ArtificialDataset(Dataset):
-    def __init__(self, N, T):
-        self.N = N
-        self.T = T
-        
-        self.max_degree = 5
-    
-    def len(self):
-        return 1
-    
-    #rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff
-    def get(self, idx):
-        edges = torch.randint(0, self.N, (2, 5*self.N)).repeat(1, self.T)
-        edges[0, :] += torch.arange(self.T).repeat_interleave(5*self.N) * self.N
-        edges[1, :] += torch.arange(self.T).repeat_interleave(5*self.N) * self.N
-        return torch.rand(self.T, self.N, 4), edges, torch.rand(5 * self.N * self.T, 2), torch.arange(4), torch.zeros(4), 0.5
-
-    def get_edges(self, rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, cutoff : float) :        
-        edges = torch.randint(0, N, (2, 5*N)).repeat(1, T)
-        edges[0, :] += torch.arange(T).repeat_interleave(5*N) * N
-        edges[1, :] += torch.arange(T).repeat_interleave(5*N) * N
-        return torch.rand(T, N, 4), edges, torch.rand(5 * N * T, 2)

@@ -6,41 +6,66 @@ import torch
 import numpy as np
 
 class GraphingLoss():
-    def __init__(self, losses):
+    def __init__(self, losses : list = []):
         self.losses = losses
-        self.stop = False
-        self.timer = 0
-        self.last_len = 0
-        self.fig = None
-        self.ax = None
 
-    def plot_and_reschedule(self):
-        if not self.stop:
-            if (self.last_len != len(self.losses)) :
-                if self.fig is None :
-                    self.fig = plt.figure()
-                    self.ax = self.fig.add_subplot(111)
-                
-                self.ax.clear() # type: ignore
-                self.ax.plot(self.losses[::2], label="Recursive Loss") # type: ignore
-                self.ax.plot(self.losses[1::2], label="Iterative loss") # type: ignore
-                self.ax.legend(["Recursive Loss", "Iterative loss"], loc="upper left") # type: ignore
-                self.fig.canvas.draw()
-                self.last_len = len(self.losses) // 2
-                
-                plt.savefig("Losses.pdf", format="pdf")
+    def plot_losses(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        
+        ax.plot(self.losses[::2], label="Recursive Loss") 
+        ax.plot(self.losses[1::2], label="Iterative loss") 
+        ax.legend(["Recursive Loss", "Iterative loss"], loc="upper left") 
+        fig.canvas.draw()
 
-            threading.Timer(self.timer, self.plot_and_reschedule).start()
+        plt.savefig("Losses.pdf", format="pdf")
+        plt.close()
+        
+    def plot_params(self, params_out : list[dict[str, torch.Tensor]], params_true : list[dict[str, torch.Tensor]], epoch : int = 0) :
+        #unwind the parameters into a numpy array
+        #first we extract the keys which will be the title of the graph
+        keys = list(params_out[0])
+        
+        #all lengths should be the same
+        length_inside_keys = params_out[0].get(keys[0]).size()[0] #type: ignore
+
+        #then we can add the values to the array
+        values_out = np.zeros((len(params_out), len(keys), length_inside_keys))
+        for i, param in enumerate(params_out) :
+            for j, key in enumerate(keys) :
+                values_out[i, j] = param[key]
+                
+        values_true = np.zeros((len(params_true), len(keys), length_inside_keys))      
+        for i, param in enumerate(params_true) :
+            for j, key in enumerate(keys) :
+                values_true[i, j] = param[key]
+                
+        #we will compute the mean and std of the value along the first dimension
+        values_out_mean = values_out.mean(axis=0)
+        values_out_std = values_out.std(axis=0)
+        
+        values_true_mean = values_true.mean(axis=0)
+        values_true_std = values_true.std(axis=0)
+                
+
+        fig = plt.figure()
+        for i, key in enumerate(keys) :
+            ax = fig.add_subplot(len(keys), 1, i + 1)
             
-    def gstop(self):
-        self.stop = True
+            #we will plot the mean and std as a shaded area
+            ax.plot(values_true_mean[i], label="True " + key)
+            ax.fill_between(np.arange(length_inside_keys), values_true_mean[i] - values_true_std[i], values_true_mean[i] + values_true_std[i], alpha=0.5)
+            
+            ax.plot(values_out_mean[i], label="Predicted " + key)
+            ax.fill_between(np.arange(length_inside_keys), values_out_mean[i] - values_out_std[i], values_out_mean[i] + values_out_std[i], alpha=0.5)
+                
+            ax.legend(loc="upper left")
+            
+        fig.canvas.draw()
         
-    def gstart(self, timer=20):
-        self.timer = timer
-        if (not self.timer or self.timer != int(self.timer)):
-            raise ValueError("timer must be a positive integer")
-        
-        threading.Timer(self.timer, self.plot_and_reschedule).start()
+        plt.savefig("models/Params_{:d}.pdf".format(epoch), format="pdf")
+        plt.close()
+
 
 #need ffmpeg to run the following
 
