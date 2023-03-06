@@ -8,11 +8,16 @@ import psutil
 def denorm(x, out, duration, border, device) :
     factor = torch.tensor([border[1] - border[0], border[3] - border[2]]).to(device)
     min_ = torch.tensor([border[0], border[2]]).to(device)
-
-    out = (out * factor + min_).detach().cpu()
-    x = (x[2:duration + 2,:,:2].to(device) * factor + min_).detach().cpu()
     
-    return x, out
+    if out.shape[-1] == 4 :
+        out = torch.cat((out[:, :, :2] * factor + min_, out[:, :, 2:] * factor), dim=-1)
+        x = torch.cat((x[2:duration + 2,:,:2].to(device) * factor + min_, x[2:duration + 2,:, 2:] * factor), dim=-1)
+
+    else :
+        out = (out * factor + min_)
+        x = (x[2:duration + 2,:,:2].to(device) * factor + min_)
+    
+    return x.detach().cpu(), out.detach().cpu()
     
 def compute_parameters(model : GraphEvolution, data : CellGraphDataset, device : torch.device, duration : int = -1) :
     all_times_out = []
@@ -49,12 +54,12 @@ def compute_parameters(model : GraphEvolution, data : CellGraphDataset, device :
                 
                 #from the output we need to rebuild the edge_index and edge_attr
                 #since the number of points changes
-                sample = model.draw(input_x.cpu())
-                input_x, edge_index, edge_attr = data.get_edges(sample.cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
+                sample = input_x[:,:,:model.out_channels//2]
+                input_x, edge_index, edge_attr = data.get_edges(sample[:,:,:2].cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
         
         #get the dictionary of parameters
         all_params_out = model.in_depth_parameters(out, normal=True)
-        all_params_true = model.in_depth_parameters(x[2:duration+2], normal=False)
+        all_params_true = model.in_depth_parameters(x[2:duration+2,:, :2], normal=False)
         
         #extract everything as item and detach it from the graph
         for key in list(all_params_out) :
@@ -92,7 +97,7 @@ def run_single(model : GraphEvolution, data , i : int, device : torch.device, du
     
     out = model(x[1:duration+1], edge_index, edge_attr[mask], params)
     
-    loss, out = model.loss_direct(out, x[2:duration + 2,:, :2])
+    loss, out = model.loss_direct(out, x[2:duration + 2,:, :model.out_channels // 2])
     
     if output :
         x, out = denorm(x, out, duration, border, device)
@@ -140,13 +145,13 @@ def run_single_recursive(model : GraphEvolution, data, i : int, device : torch.d
         
         #from the output we need to rebuild the edge_index and edge_attr
         #since the number of points changes
-        sample = model.draw(input_x.cpu())
-        input_x, edge_index, edge_attr = data.get_edges(sample.cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
+        sample = input_x[:,:,:model.out_channels//2]
+        input_x, edge_index, edge_attr = data.get_edges(sample[:,:,:2].cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
         
     if isinstance(model, GraphEvolutionDiscr) :
-            loss, out = model.loss_recursive(out, x[2:duration + 2,:, :2], all_edges=all_edges, grad=True)
+            loss, out = model.loss_recursive(out, x[2:duration + 2,:, :model.out_channels // 2], all_edges=all_edges, grad=grad)
     else :
-        loss, out = model.loss_recursive(out, x[2:duration + 2,:, :2])
+        loss, out = model.loss_recursive(out, x[2:duration + 2,:, :model.out_channels // 2])
     
     if output :
         x, out = denorm(x, out, duration, border, device)
@@ -198,8 +203,8 @@ def train(model : GraphEvolution, optimizer : torch.optim.Optimizer, scheduler :
 
         condition = distribution.sample().item() and recursive
 
-        if condition :
-            duration = int(torch.randint(low=2, high=int(torch.ceil(probability * 10).item())+1, size = (1,)).item())
+        if isinstance(model, GraphEvolutionDiscr) or condition :
+            duration = int(torch.randint(low=2, high=int(torch.ceil(probability * 40).item())+1, size = (1,)).item())
             loss, _, _ = run_single_recursive(model, data, i, device, duration=duration, grad=True) 
 
         else :

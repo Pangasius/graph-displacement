@@ -25,37 +25,6 @@ import threading
 23422   ./p058_r000_sb020_2147623_b134_fast4p.p
 """
 
-def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=False, T_limit=0):
-    """
-    root: root directory
-    train_size: number of training examples
-    test_size: number of test examples
-    val_size: number of validation examples
-    max_size: max number of examples to use
-    inmemory: if true, load all data into memory
-    bg_load: if true, load data in the background
-    wrap: if true, wrap the data
-    T_limit: if > 0, limit the number of time steps to T_limit
-    """
-    #get all the files
-    relative = [s.replace('\\', '/') for s in glob.glob(str(root) + '/*interaction.p*')]
-    max_size = min(max_size, len(relative))
-    relative = relative[:max_size]
-    absolute = [osp.abspath(s) for s in relative]
-    absolute.sort(key=hash)
-    
-    #split into train, test, val
-    train = absolute[:int(0.8*len(absolute))]
-    test = absolute[int(0.8*len(absolute)):int(0.9*len(absolute))]
-    val = absolute[int(0.9*len(absolute)):]
-    
-    #create the datasets
-    train_dataset = CellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    test_dataset = CellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    val_dataset = CellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    
-    return train_dataset, test_dataset, val_dataset
-
 class CellGraphDataset(Dataset):
     def __init__(self, root : str | list[str], max_size : int , transform=None, pre_transform=None, pre_filter=None, inmemory=False, bg_load=False, wrap=False, T_limit=0):
         super().__init__(root, transform, pre_transform, pre_filter) # type: ignore 
@@ -288,3 +257,90 @@ class CellGraphDataset(Dataset):
         else :
             #overwrite the paths to the previous configuration
             self._overwrite_source("sources/" + path)
+            
+
+def load(load_all = True, pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
+    """_summary_
+
+    Args:
+        load_all (bool, optional): load directly from a pickle.
+        pre_separated (bool, optional): if three subfolders already exist for train test and val.
+        override (bool, optional): make this true to always use the same ones.
+    """
+    
+    data_train, data_test, data_val = None, None, None
+
+    if load_all : 
+        if os.path.exists("data/training.pkl") :
+            with open("data/training.pkl", "rb") as f:
+                data_train = pickle.load(f)
+        else :
+            print("Training data not found")
+            
+        if os.path.exists("data/testing.pkl") :
+            with open("data/testing.pkl", "rb") as f:
+                data_test = pickle.load(f)
+        else :
+            print("Test data not found")
+            
+        if os.path.exists("data/validation.pkl") :
+            with open("data/validation.pkl", "rb") as f:
+                data_val = pickle.load(f)
+        else :
+            print("Validation data not found")
+    else :
+        if pre_separated :
+            path = "/scratch/users/nstillman/data-cpp/" #remote for wrapped
+            
+            data_train = CellGraphDataset(root=path + 'train', max_size=1000, inmemory=True, bg_load=True, wrap=True, T_limit=16)
+            print("Training data length : ", data_train.len())
+
+            data_test = CellGraphDataset(root=path + 'test', max_size=50, inmemory=True, bg_load=True, wrap=True, T_limit=16)
+            print("Test data length : ", data_test.len())
+            
+            data_val = CellGraphDataset(root=path + 'valid', max_size=50, inmemory=True, bg_load=True, wrap=True, T_limit=8)
+            print("Validation data length : ", data_val.len())
+        else :
+            path = "/scratch/users/nstillman/open/low_tau_high_v0/"
+            
+            data_train, data_test, data_val =  extract_train_test_val(path, max_size=1000, inmemory=True, bg_load=True, wrap=False, T_limit=0)
+
+        if override :
+            data_train.save_or_load_if_exists("train_paths.pkl")
+            data_test.save_or_load_if_exists("test_paths.pkl")
+            data_val.save_or_load_if_exists("val_paths.pkl")
+        else :
+            torch.autograd.set_detect_anomaly(True) #type: ignore
+            
+    return data_train, data_test, data_val #type: ignore #up to the user to make sure they are ok
+
+def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=False, T_limit=0):
+    """
+    root: root directory
+    train_size: number of training examples
+    test_size: number of test examples
+    val_size: number of validation examples
+    max_size: max number of examples to use
+    inmemory: if true, load all data into memory
+    bg_load: if true, load data in the background
+    wrap: if true, wrap the data
+    T_limit: if > 0, limit the number of time steps to T_limit
+    """
+    #get all the files
+    relative = [s.replace('\\', '/') for s in glob.glob(str(root) + '/*interaction.p*')]
+    max_size = min(max_size, len(relative))
+    relative = relative[:max_size]
+    absolute = [osp.abspath(s) for s in relative]
+    absolute.sort(key=hash)
+    
+    #split into train, test, val
+    train = absolute[:int(0.8*len(absolute))]
+    test = absolute[int(0.8*len(absolute)):int(0.9*len(absolute))]
+    val = absolute[int(0.9*len(absolute)):]
+    
+    #create the datasets
+    train_dataset = CellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    test_dataset = CellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    val_dataset = CellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    
+    return train_dataset, test_dataset, val_dataset
