@@ -54,12 +54,12 @@ def compute_parameters(model : GraphEvolution, data : CellGraphDataset, device :
                 
                 #from the output we need to rebuild the edge_index and edge_attr
                 #since the number of points changes
-                sample = input_x[:,:,:model.out_channels//2]
+                sample = model.draw(input_x)
                 input_x, edge_index, edge_attr = data.get_edges(sample[:,:,:2].cpu(), data.max_degree, wrap=True, T=1, N=xshape[1], cutoff=cutoff)
         
         #get the dictionary of parameters
-        all_params_out = model.in_depth_parameters(out, normal=True)
-        all_params_true = model.in_depth_parameters(x[2:duration+2,:, :2], normal=False)
+        all_params_out = model.in_depth_parameters(out)
+        all_params_true = model.in_depth_parameters(x[2:duration+2,:, :2])
         
         #extract everything as item and detach it from the graph
         for key in list(all_params_out) :
@@ -204,7 +204,7 @@ def train(model : GraphEvolution, optimizer : torch.optim.Optimizer, scheduler :
         condition = distribution.sample().item() and recursive
 
         if isinstance(model, GraphEvolutionDiscr) or condition :
-            duration = int(torch.randint(low=2, high=int(torch.ceil(probability * 40).item())+1, size = (1,)).item())
+            duration =int((epoch / max_epoch) * 100)
             loss, _, _ = run_single_recursive(model, data, i, device, duration=duration, grad=True) 
 
         else :

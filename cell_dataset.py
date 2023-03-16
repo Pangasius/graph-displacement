@@ -113,7 +113,7 @@ class CellGraphDataset(Dataset):
         
         #normalize the data
         
-        border = [rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()]
+        border = torch.tensor([rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()])
         
         mean = torch.tensor([rval[:,:,0].mean(), rval[:,:,1].mean()])
         std = torch.tensor([rval[:,:,0].std(), rval[:,:,1].std()])
@@ -258,8 +258,14 @@ class CellGraphDataset(Dataset):
             #overwrite the paths to the previous configuration
             self._overwrite_source("sources/" + path)
             
+    def to(self, device):
+        for i in range(self.len()) :
+            rval, edge_index, edge_attr, border, params, cutoff = self.memory[self.paths.fget()[i]]
+            border = torch.tensor(border)
+            self.memory[self.paths.fget()[i]] = (rval.to(device), edge_index.to(device), edge_attr.to(device), border.to(device), params.to(device), cutoff)
+            
 
-def load(load_all = True, pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
+def load(load_all = True, suffix = "", pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
     """_summary_
 
     Args:
@@ -271,20 +277,20 @@ def load(load_all = True, pre_separated = False, override = False) -> tuple[Cell
     data_train, data_test, data_val = None, None, None
 
     if load_all : 
-        if os.path.exists("data/training.pkl") :
-            with open("data/training.pkl", "rb") as f:
+        if os.path.exists("data/training" + suffix + ".pkl") :
+            with open("data/training" + suffix + ".pkl", "rb") as f:
                 data_train = pickle.load(f)
         else :
             print("Training data not found")
             
-        if os.path.exists("data/testing.pkl") :
-            with open("data/testing.pkl", "rb") as f:
+        if os.path.exists("data/testing" + suffix + ".pkl") :
+            with open("data/testing" + suffix + ".pkl", "rb") as f:
                 data_test = pickle.load(f)
         else :
             print("Test data not found")
             
-        if os.path.exists("data/validation.pkl") :
-            with open("data/validation.pkl", "rb") as f:
+        if os.path.exists("data/validation" + suffix + ".pkl") :
+            with open("data/validation" + suffix + ".pkl", "rb") as f:
                 data_val = pickle.load(f)
         else :
             print("Validation data not found")

@@ -21,7 +21,7 @@ class GraphingLoss():
         plt.savefig("Losses.pdf", format="pdf")
         plt.close()
         
-    def plot_params(self, params_out : list[dict[str, torch.Tensor]], params_true : list[dict[str, torch.Tensor]], epoch : int = 0) :
+    def plot_params(self, params_out : list[dict[str, torch.Tensor]], params_true : list[dict[str, torch.Tensor]], epoch : int = 0, extension = "") :
         #unwind the parameters into a numpy array
         #first we extract the keys which will be the title of the graph
         keys = list(params_out[0])
@@ -63,7 +63,7 @@ class GraphingLoss():
             
         fig.canvas.draw()
         
-        plt.savefig("models/Params_{:d}.pdf".format(epoch), format="pdf")
+        plt.savefig("models/Params{:s}_{:d}.pdf".format(extension, epoch), format="pdf")
         plt.close()
 
 
@@ -82,7 +82,8 @@ def make_animation(saved_result, animation_name, show_speed = True) :
         out, x = saved_result
 
     figure = plt.figure()
-    ax = figure.add_subplot(111)
+    ax_true = figure.add_subplot(211)
+    ax_pred = figure.add_subplot(212)
 
     left = x[:,:,0].min()
     right = x[:,:,0].max()
@@ -90,32 +91,34 @@ def make_animation(saved_result, animation_name, show_speed = True) :
     up = x[:,:,1].max()
 
     def AnimationFunction(i):
-        ax.clear()
+        ax_true.clear()
+        ax_pred.clear()
         
         pos_out = out[i, :, :2]
         pos_x = x[i, :, :2]
 
         #now plot the graph as bubbles to show the difference between the two
-        ax.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="True position")
-        ax.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Predicted position")
+        ax_true.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="True position")
+        ax_pred.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Predicted position")
 
         if show_speed :
             speed_out = out[i, :, 2:]
             speed_x = x[i, :, 2:]
 
             #show an arrow for the speed
-            ax.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
-            ax.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
+            ax_true.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
+            ax_pred.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
         
-        ax.set_xlim(left, right)
-        ax.set_ylim(down, up)
-        
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        
-        ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+        for ax in [ax_true, ax_pred] :
+            ax.set_xlim(left, right)
+            ax.set_ylim(down, up)
+            
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            
+            ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
 
-        ax.legend(["True position", "Predicted position"], loc="upper left")
+            ax.legend(loc="upper left")
 
     anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
 

@@ -142,4 +142,8 @@ result*.pkl
 loss*.pkl
 Params*.pdf
 
+animation_[0-9]*.mp4
+
+animation_traj_[0-9]*.mp4
+
 test*

@@ -101,17 +101,17 @@ class GraphEvolution(torch.nn.Module):
         #and compute the loss
         pred = pred.clone()
         std = torch.exp(pred[:,:,self.out_channels//2:])
-        
-        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
-        
-        return self.diff(sample, pred, std, target)
 
-    def diff(self, sample, pred, std, target) :
+        return self.diff(pred, std, target)
+
+    def diff(self, pred, std, target) :
         target = target.to(pred.device)
         
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
         #slide 16
         diff = (pred[:,:,:self.out_channels//2] - target)**2
+        
+        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
         
         if self.wrap :
             #https://www.geogebra.org/m/fvsyepzd
@@ -119,11 +119,11 @@ class GraphEvolution(torch.nn.Module):
         
             loss = torch.mean(special / (2 * std**2) + pred[:,:,self.out_channels//2:])
             
-            return loss.requires_grad_(), sample.detach() % 1
+            return loss.requires_grad_(), sample % 1
         else : 
             loss = torch.mean(diff / (2 * std**2) + pred[:,:,self.out_channels//2:])
         
-            return loss.requires_grad_(), sample.detach()
+            return loss.requires_grad_(), sample
         
         
     def in_depth_parameters(self, x, normal = False) :
@@ -139,13 +139,13 @@ class GraphEvolution(torch.nn.Module):
             x_from_normal = x[:,:,:2]
         
         speed_diff_normal = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x_from_normal[1:, :, :] - x_from_normal[:-1, :, :]), dim=(1,2))), dim=0)
-        all_params['speed_normal'] = speed_diff_normal
+        all_params['speed_normal'] = speed_diff_normal * 100 #to make it comparable to the other parameters
         
         center_of_mass = torch.mean(x, dim=(1,2))
         all_params['center_of_mass'] = center_of_mass
         
         spread = torch.std(x, dim=(1,2))
-        all_params['spread'] = spread
+        all_params['spread'] = spread * 2
         
         return all_params
         
@@ -158,14 +158,15 @@ class GraphEvolution(torch.nn.Module):
         
         loss = torch.tensor(0.).to(pred.device)
         for key in all_params_pred :
-            loss = loss + torch.mean(torch.square(all_params_pred[key] - all_params_target[key]))
+            loss = loss + torch.mean(torch.square(all_params_pred[key] - all_params_target[key])) * 50
             
-        sample = torch.normal(pred[:,:,:self.out_channels//2], torch.exp(pred[:,:,self.out_channels//2:])).to(pred.device)
-        
+        std = torch.exp(pred[:,:,self.out_channels//2:]).to(pred.device)
+        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
+
         if self.wrap :
-            return loss.requires_grad_(), sample.detach() % 1
+            return loss.requires_grad_(), sample % 1
         else : 
-            return loss.requires_grad_(), sample.detach()
+            return loss.requires_grad_(), sample
         
     def loss_recursive(self, pred, target):
         # we will compute aggregate statistics for the whole trajectory
@@ -290,13 +291,10 @@ class GraphEvolutionDiscr(GraphEvolution):
         
         std = torch.exp(pred[:,:,self.out_channels//2:])
         
-        loss_gen = -torch.mean(disc_out) + self.diff(pred[:,:,:self.out_channels//2],\
-                                                     pred,\
+        loss_gen = -torch.mean(disc_out) + self.diff( pred,\
                                                      std,\
                                                      target)[0]
     
         loss = loss_gen + 5 * loss_critic
-        
-        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
-        
-        return loss.requires_grad_(), sample.detach()
+
+        return loss.requires_grad_(), pred[:,:,:self.out_channels//2].detach()
