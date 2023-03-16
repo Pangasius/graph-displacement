@@ -123,7 +123,7 @@ class GraphEvolution(torch.nn.Module):
         else : 
             loss = torch.mean(diff / (2 * std**2) + pred[:,:,self.out_channels//2:])
         
-            return loss.requires_grad_(), sample
+            return loss.requires_grad_(), pred[:,:,:self.out_channels//2]
         
         
     def in_depth_parameters(self, x, normal = False) :
@@ -139,7 +139,10 @@ class GraphEvolution(torch.nn.Module):
             x_from_normal = x[:,:,:2]
         
         speed_diff_normal = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x_from_normal[1:, :, :] - x_from_normal[:-1, :, :]), dim=(1,2))), dim=0)
-        all_params['speed_normal'] = speed_diff_normal * 100 #to make it comparable to the other parameters
+        all_params['speed_normal'] = speed_diff_normal#to make it comparable to the other parameters
+        
+        speed_diff = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x[1:, :, :] - x[:-1, :, :]), dim=(1,2))), dim=0)
+        all_params['speed'] = speed_diff * 100 #to make it comparable to the other parameters
         
         center_of_mass = torch.mean(x, dim=(1,2))
         all_params['center_of_mass'] = center_of_mass
@@ -158,15 +161,15 @@ class GraphEvolution(torch.nn.Module):
         
         loss = torch.tensor(0.).to(pred.device)
         for key in all_params_pred :
-            loss = loss + torch.mean(torch.square(all_params_pred[key] - all_params_target[key])) * 50
+            loss = loss + torch.mean(torch.square(all_params_pred[key] - all_params_target[key]))
             
         std = torch.exp(pred[:,:,self.out_channels//2:]).to(pred.device)
         sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
 
         if self.wrap :
-            return loss.requires_grad_(), sample % 1
+            return loss.requires_grad_(), pred[:,:,:self.out_channels//2] % 1
         else : 
-            return loss.requires_grad_(), sample
+            return loss.requires_grad_(), pred[:,:,:self.out_channels//2]
         
     def loss_recursive(self, pred, target):
         # we will compute aggregate statistics for the whole trajectory

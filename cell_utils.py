@@ -61,6 +61,10 @@ class GraphingLoss():
                 
             ax.legend(loc="upper left")
             
+            #plot in log scale if the values are too small
+            if values_out_mean[i].mean() < 1e-2 :
+                ax.set_yscale("log")
+            
         fig.canvas.draw()
         
         plt.savefig("models/Params{:s}_{:d}.pdf".format(extension, epoch), format="pdf")
