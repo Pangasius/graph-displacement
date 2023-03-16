@@ -140,7 +140,6 @@ model*.pt
 
 result*.pkl
 loss*.pkl
-Params*.pdf
 
 animation_[0-9]*.mp4
 
