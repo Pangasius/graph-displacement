@@ -144,6 +144,6 @@ Params*
 
 animation_(recursive_)?[0-9]*.mp4
 
-animation_(recursive_)traj_[0-9]*.mp4
+animation_(recursive_)?traj_[0-9]*.mp4
 
 test*
