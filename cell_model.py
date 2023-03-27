@@ -20,26 +20,22 @@ class GraphEvolution(torch.nn.Module):
         
         #expand input so encoder is the size of the hidden channels
         self.encoder_resize = torch.nn.Linear(self.in_channels, self.hidden_channels)
-        self.encoder_resize2 = torch.nn.Linear(self.hidden_channels, self.hidden_channels)
         
         #we need an encoder to encode the messages before sending them
-        encode_layer = torch.nn.TransformerEncoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=32)
-        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=2)
+        encode_layer = torch.nn.TransformerEncoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels)
+        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=4)
         
         self.gat_resize = torch.nn.Linear(self.hidden_channels, self.hidden_channels * self.gat_heads)
         
         self.gatv2s = torch.nn.ModuleList()
         for i in range(messages):
             self.gatv2s.append(GATv2Conv(self.hidden_channels * self.gat_heads, self.hidden_channels, heads=self.gat_heads, dropout=dropout, concat=True, edge_dim=self.edge_dim))
-                
-        self.gat_resize2 = torch.nn.Linear(self.hidden_channels * self.gat_heads, self.hidden_channels)
         
         #we take the output and convert it to the desired output
-        decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=32)
-        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=2)
+        decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.gat_heads * self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels * self.gat_heads)
+        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=4)
         
-        self.decoder_resize = torch.nn.Linear(self.hidden_channels, self.hidden_channels)
-        self.decoder_resize2 = torch.nn.Linear(self.hidden_channels, self.out_channels)
+        self.decoder_resize = torch.nn.Linear(self.hidden_channels * self.gat_heads, self.out_channels)
 
     def forward(self, x, edge_index, edge_attr, params):
         #x is a tensor of shape (T, N, in_channels)
@@ -58,26 +54,25 @@ class GraphEvolution(torch.nn.Module):
         xshape = x.shape
 
         #encode
-        encoded = self.encoder_resize(x.reshape(-1, self.in_channels))
+        encoded = self.encoder_resize(x.reshape(-1, self.in_channels)).reshape(-1, 1, self.hidden_channels)
         encoded = F.gelu(encoded)
-        encoded = self.encoder_resize2(encoded).reshape(-1, 1, self.hidden_channels)
         encoded = self.transformer_encoder(encoded)
         
         y = self.gat_resize(encoded).reshape(-1, self.hidden_channels * self.gat_heads)
+        
+        y_0 = y.clone().reshape(-1, 1, self.hidden_channels * self.gat_heads)
 
         #here T is treated as a batch dimension
         for i in range(len(self.gatv2s)):
-            y = self.gatv2s[i](y, edge_index, edge_attr)
+            y = y + self.gatv2s[i](y, edge_index, edge_attr)
             y = F.gelu(y)
             
-        y = self.gat_resize2(y).reshape(xshape[0]*xshape[1], 1, self.hidden_channels)
+        y = y.reshape(xshape[0]*xshape[1], 1, self.gat_heads* self.hidden_channels)
 
         # different nodes will be considered as batches
-        y = self.transformer_decoder(y, encoded).reshape(xshape[0]*xshape[1], self.hidden_channels)
+        y = self.transformer_decoder(y, y_0).reshape(xshape[0]*xshape[1], self.gat_heads* self.hidden_channels)
 
-        y = self.decoder_resize(y)
-        y = F.gelu(y)
-        y = self.decoder_resize2(y).reshape(xshape[0], xshape[1], self.out_channels)
+        y = self.decoder_resize(y).reshape(xshape[0], xshape[1], self.out_channels)
         
         means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
         log_std = y[:,:,self.out_channels//2:]
@@ -93,7 +88,7 @@ class GraphEvolution(torch.nn.Module):
                 if param.grad != None :
                     print(name, param.grad.mean())
     
-    def loss_direct(self, pred, target):
+    def loss_direct(self, pred, target, loss_history : dict[str, list[float]]):
         #pred is a tensor of shape (T, N, 8)
         #target is a tensor of shape (T, N, 4)
         
@@ -102,26 +97,40 @@ class GraphEvolution(torch.nn.Module):
         pred = pred.clone()
         std = torch.exp(pred[:,:,self.out_channels//2:])
 
-        return self.diff(pred, std, target)
+        return self.diff(pred, std, target, loss_history=loss_history)
 
-    def diff(self, pred, std, target) :
+    def diff(self, pred, std, target, loss_history : dict[str, list[float]]) :
         target = target.to(pred.device)
         
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
         #slide 16
         diff = (pred[:,:,:self.out_channels//2] - target)**2
         
-        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
-        
         if self.wrap :
             #https://www.geogebra.org/m/fvsyepzd
             special = torch.sin(diff * torch.pi) + torch.square(diff) / 20
         
-            loss = torch.mean(special / (2 * std**2) + pred[:,:,self.out_channels//2:])
+            loss_mean = special / (2 * std**2) 
+            loss_log = pred[:,:,self.out_channels//2:]
             
-            return loss.requires_grad_(), sample % 1
+            loss_history['loss_mean'].append(loss_mean.mean().item())
+            loss_history['loss_log'].append(loss_log.mean().item())
+            
+            loss = torch.mean(loss_mean + loss_log)
+            
+            loss_history['loss'].append(loss.item())
+            
+            return loss.requires_grad_(), pred[:,:,:self.out_channels//2] % 1
         else : 
-            loss = torch.mean(diff / (2 * std**2) + pred[:,:,self.out_channels//2:])
+            loss_mean = diff / (2 * std**2) 
+            loss_log = pred[:,:,self.out_channels//2:]
+            
+            loss_history['loss_mean'].append(loss_mean.mean().item())
+            loss_history['loss_log'].append(loss_log.mean().item())
+            
+            loss = torch.mean(loss_mean + loss_log)
+            
+            loss_history['loss'].append(loss.item())
         
             return loss.requires_grad_(), pred[:,:,:self.out_channels//2]
         
@@ -137,46 +146,29 @@ class GraphEvolution(torch.nn.Module):
 
         else :
             x_from_normal = x[:,:,:2]
+            
+        speed_diff_normal_x = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x_from_normal[1:, :, 0] - x_from_normal[:-1, :, 0]), dim=1)), dim=0)
+        speed_diff_normal_y = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x_from_normal[1:, :, 1] - x_from_normal[:-1, :, 1]), dim=1)), dim=0)
+        all_params['speed_normal_x'] = speed_diff_normal_x 
+        all_params['speed_normal_y'] = speed_diff_normal_y 
         
-        speed_diff_normal = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x_from_normal[1:, :, :] - x_from_normal[:-1, :, :]), dim=(1,2))), dim=0)
-        all_params['speed_normal'] = speed_diff_normal#to make it comparable to the other parameters
+        speed_diff_x = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x[1:, :, 0] - x[:-1, :, 0]), dim=1)), dim=0)
+        speed_diff_y = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x[1:, :, 1] - x[:-1, :, 1]), dim=1)), dim=0)
+        all_params['speed_x'] = speed_diff_x
+        all_params['speed_y'] = speed_diff_y
         
-        speed_diff = torch.cat((torch.zeros(1).to(x.device), torch.mean(torch.square(x[1:, :, :] - x[:-1, :, :]), dim=(1,2))), dim=0)
-        all_params['speed'] = speed_diff * 100 #to make it comparable to the other parameters
+        mean_mu_x =   torch.mean(x[:,:,0], dim=1)
+        mean_mu_y =  torch.mean(x[:,:,1], dim=1)
+        all_params['Mean_mu_x'] =  mean_mu_x
+        all_params['Mean_mu_y'] =  mean_mu_y
         
-        center_of_mass = torch.mean(x, dim=(1,2))
-        all_params['center_of_mass'] = center_of_mass
-        
-        spread = torch.std(x, dim=(1,2))
-        all_params['spread'] = spread * 2
-        
+        std_mu_x =  torch.log(torch.std(x[:,:,0], dim=1))
+        std_mu_y =  torch.log(torch.std(x[:,:,1], dim=1))
+        all_params['log(std_mu_x)'] =  std_mu_x
+        all_params['log(std_mu_y)'] =  std_mu_y
+
         return all_params
         
-    def aggregate_parameters(self, pred, target):
-        pred = pred.clone()
-        target = target.to(pred.device)
-        
-        all_params_pred = self.in_depth_parameters(pred, normal=True)
-        all_params_target = self.in_depth_parameters(target)
-        
-        loss = torch.tensor(0.).to(pred.device)
-        for key in all_params_pred :
-            loss = loss + torch.mean(torch.square(all_params_pred[key] - all_params_target[key]))
-            
-        std = torch.exp(pred[:,:,self.out_channels//2:]).to(pred.device)
-        sample = torch.normal(pred[:,:,:self.out_channels//2], std).to(pred.device)
-
-        if self.wrap :
-            return loss.requires_grad_(), pred[:,:,:self.out_channels//2] % 1
-        else : 
-            return loss.requires_grad_(), pred[:,:,:self.out_channels//2]
-        
-    def loss_recursive(self, pred, target):
-        # we will compute aggregate statistics for the whole trajectory
-        
-        loss, sample = self.aggregate_parameters(pred, target) 
-
-        return loss.requires_grad_(), sample
     
     def draw(self, pred) :
         std = torch.exp(pred[:,:,self.out_channels//2:])
@@ -259,7 +251,7 @@ class GraphEvolutionDiscr(GraphEvolution):
         super(GraphEvolutionDiscr, self).__init__(in_channels, out_channels, hidden_channels, dropout=dropout, edge_dim=edge_dim, messages=messages, wrap=wrap)
         self.discr = Discriminator(out_channels // 2, hidden_channels, dropout=dropout)
         
-    def loss_recursive(self, pred, target, all_edges, grad=True):
+    def loss_direct(self, pred, target, all_edges, loss_history : dict[str, list[float]], grad=True):
         """Uses the discriminator to compute the loss"""
         #pred is a tensor of shape (T, N, 8)
         #target is a tensor of shape (T, N, 4)
@@ -296,8 +288,9 @@ class GraphEvolutionDiscr(GraphEvolution):
         
         loss_gen = -torch.mean(disc_out) + self.diff( pred,\
                                                      std,\
-                                                     target)[0]
+                                                     target, \
+                                                    loss_history)[0]
     
         loss = loss_gen + 5 * loss_critic
 
-        return loss.requires_grad_(), pred[:,:,:self.out_channels//2].detach()
+        return loss.requires_grad_(), pred[:,:,:self.out_channels//2]

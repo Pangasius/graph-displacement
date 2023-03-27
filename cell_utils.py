@@ -1,24 +1,26 @@
-import threading
-
 import matplotlib.pyplot as plt
 
 import torch
 import numpy as np
 
 class GraphingLoss():
-    def __init__(self, losses : list = []):
-        self.losses = losses
+    def __init__(self):
+        pass
 
-    def plot_losses(self):
+    def plot_losses(self, title : str, data : dict[str, list[float]], extension = "") :
         fig = plt.figure()
         ax = fig.add_subplot(111)
         
-        ax.plot(self.losses[::2], label="Recursive Loss") 
-        ax.plot(self.losses[1::2], label="Iterative loss") 
-        ax.legend(["Recursive Loss", "Iterative loss"], loc="upper left") 
+        ax.plot(np.log(data["loss_mean"]), label="log(loss_mean)")  
+        ax.plot(data["loss_log"], label="loss_log")
+        ax.plot(data["loss"], label="loss")
+
+        
+        ax.legend(loc="upper left") 
+        ax.set_title(title)
         fig.canvas.draw()
 
-        plt.savefig("Losses.pdf", format="pdf")
+        plt.savefig("Losses" + extension + title.replace(" ", "") + ".pdf", format="pdf")
         plt.close()
         
     def plot_params(self, params_out : list[dict[str, torch.Tensor]], params_true : list[dict[str, torch.Tensor]], epoch : int = 0, extension = "") :
@@ -48,24 +50,21 @@ class GraphingLoss():
         values_true_std = values_true.std(axis=0)
                 
 
-        fig = plt.figure()
+        fig, axs = plt.subplots(len(keys) // 2, 2, layout='constrained', figsize=(10, 4))
+        
         for i, key in enumerate(keys) :
-            ax = fig.add_subplot(len(keys), 1, i + 1)
-            
             #we will plot the mean and std as a shaded area
-            ax.plot(values_true_mean[i], label="True " + key)
-            ax.fill_between(np.arange(length_inside_keys), values_true_mean[i] - values_true_std[i], values_true_mean[i] + values_true_std[i], alpha=0.5)
+            axs.flat[i].plot(values_true_mean[i], label="True " + key)
+            axs.flat[i].fill_between(np.arange(length_inside_keys), values_true_mean[i] - values_true_std[i], values_true_mean[i] + values_true_std[i], alpha=0.5)
             
-            ax.plot(values_out_mean[i], label="Predicted " + key)
-            ax.fill_between(np.arange(length_inside_keys), values_out_mean[i] - values_out_std[i], values_out_mean[i] + values_out_std[i], alpha=0.5)
+            axs.flat[i].plot(values_out_mean[i], label="Predicted " + key)
+            axs.flat[i].fill_between(np.arange(length_inside_keys), values_out_mean[i] - values_out_std[i], values_out_mean[i] + values_out_std[i], alpha=0.5)
                 
-            ax.legend(loc="upper left")
-            
-            #plot in log scale if the values are too small
-            if values_out_mean[i].mean() < 1e-2 :
-                ax.set_yscale("log")
+            axs.flat[i].legend(loc="upper left", fontsize="xx-small")
             
         fig.canvas.draw()
+        
+        fig.suptitle('Parameters evolution at epoch {:d}'.format(epoch), fontsize='xx-large')
         
         plt.savefig("models/Params{:s}_{:d}.pdf".format(extension, epoch), format="pdf")
         plt.close()

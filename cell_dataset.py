@@ -2,7 +2,7 @@ import os.path as osp
 import glob
 
 from torch_geometric.data import Dataset
-from torch_geometric.nn import radius_graph, radius_graph
+from torch_geometric.nn import radius_graph, radius_graph, knn_graph
 import torch
 
 import pickle
@@ -163,7 +163,8 @@ class CellGraphDataset(Dataset):
         
             rval = rval.reshape(T*N, -1)
             
-            edge_index = radius_graph(rval, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
+            #edge_index = radius_graph(rval, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
+            edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=True, flow="source_to_target")
             
             edge_attr = (rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]).reshape(-1,2)
         else :
@@ -176,7 +177,8 @@ class CellGraphDataset(Dataset):
             
             batch = torch.arange(T).repeat_interleave(N * 9).to(torch.long)
         
-            edge_index = radius_graph(rval_expanded, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree, num_workers=2)
+            #edge_index = radius_graph(rval_expanded, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree, num_workers=2)
+            edge_index = knn_graph(rval_expanded, k = max_degree, batch=batch, loop=True, flow="source_to_target", num_workers=2)
         
             edges_final = torch.zeros((2, 0), dtype=torch.long)
             for j in range(T) :
@@ -263,6 +265,21 @@ class CellGraphDataset(Dataset):
             rval, edge_index, edge_attr, border, params, cutoff = self.memory[self.paths.fget()[i]]
             border = torch.tensor(border)
             self.memory[self.paths.fget()[i]] = (rval.to(device), edge_index.to(device), edge_attr.to(device), border.to(device), params.to(device), cutoff)
+
+    @staticmethod
+    def merge_datasets(datasets):
+        paths = []
+        memory = {}
+        for dataset in datasets :
+            paths += dataset.paths.fget()
+            memory = {**memory, **dataset.memory}
+            
+        dataset = datasets[0]
+            
+        dataset.paths.fset(paths)
+        dataset.memory = memory
+        
+        return dataset
             
 
 def load(load_all = True, suffix = "", pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
@@ -319,6 +336,18 @@ def load(load_all = True, suffix = "", pre_separated = False, override = False) 
             torch.autograd.set_detect_anomaly(True) #type: ignore
             
     return data_train, data_test, data_val #type: ignore #up to the user to make sure they are ok
+
+def single_overfit_dataset(data_train : CellGraphDataset, data_test : CellGraphDataset) :
+    """
+    creates a single data point data set in data_train, and copies it to data_test
+    """
+    data_train.paths.fset([data_train.paths.fget()[0]])
+    data_test.paths.fset([data_train.paths.fget()[0]])
+    data = data_train.memory[data_train.paths.fget()[0]]
+    data_train.memory = {data_train.paths.fget()[0] : data}
+    data_test.memory = {data_test.paths.fget()[0] : data}
+    
+    return data_train, data_test
 
 def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=False, T_limit=0):
     """
