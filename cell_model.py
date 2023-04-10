@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch
 
 class GraphEvolution(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, hidden_channels, dropout=0.0, edge_dim=1, messages=3, wrap=True):
+    def __init__(self, in_channels, out_channels, hidden_channels, dropout=0.0, edge_dim=1, messages=3, wrap=True, absolute=False):
         super().__init__()
         
         self.edge_dim = edge_dim
@@ -23,7 +23,7 @@ class GraphEvolution(torch.nn.Module):
         
         #we need an encoder to encode the messages before sending them
         encode_layer = torch.nn.TransformerEncoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels)
-        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=4)
+        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=6)
         
         self.gat_resize = torch.nn.Linear(self.hidden_channels, self.hidden_channels * self.gat_heads)
         
@@ -33,9 +33,11 @@ class GraphEvolution(torch.nn.Module):
         
         #we take the output and convert it to the desired output
         decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.gat_heads * self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels * self.gat_heads)
-        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=4)
+        self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=6)
         
         self.decoder_resize = torch.nn.Linear(self.hidden_channels * self.gat_heads, self.out_channels)
+        
+        self.absolute = absolute
 
     def forward(self, x, edge_index, edge_attr, params):
         #x is a tensor of shape (T, N, in_channels)
@@ -54,27 +56,30 @@ class GraphEvolution(torch.nn.Module):
         xshape = x.shape
 
         #encode
-        encoded = self.encoder_resize(x.reshape(-1, self.in_channels)).reshape(-1, 1, self.hidden_channels)
-        encoded = F.gelu(encoded)
-        encoded = self.transformer_encoder(encoded)
+        x_extended = self.encoder_resize(x.reshape(-1, self.in_channels)).reshape(-1, 1, self.hidden_channels)
+        encoded = F.gelu(x_extended)
+        encoded = self.transformer_encoder(encoded) + x_extended
         
         y = self.gat_resize(encoded).reshape(-1, self.hidden_channels * self.gat_heads)
         
-        y_0 = y.clone().reshape(-1, 1, self.hidden_channels * self.gat_heads)
+        encoder_extended = y.clone().reshape(-1, 1, self.hidden_channels * self.gat_heads)
 
         #here T is treated as a batch dimension
         for i in range(len(self.gatv2s)):
-            y = y + self.gatv2s[i](y, edge_index, edge_attr)
+            y = self.gatv2s[i](y, edge_index, edge_attr)
             y = F.gelu(y)
             
         y = y.reshape(xshape[0]*xshape[1], 1, self.gat_heads* self.hidden_channels)
 
         # different nodes will be considered as batches
-        y = self.transformer_decoder(y, y_0).reshape(xshape[0]*xshape[1], self.gat_heads* self.hidden_channels)
+        y = self.transformer_decoder(y, encoder_extended).reshape(xshape[0]*xshape[1], self.gat_heads* self.hidden_channels)
 
         y = self.decoder_resize(y).reshape(xshape[0], xshape[1], self.out_channels)
         
-        means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
+        if self.absolute :
+            means = y[:,:,:self.out_channels//2]
+        else :
+            means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
         log_std = y[:,:,self.out_channels//2:]
         
         out = torch.cat((means, log_std), dim=2)

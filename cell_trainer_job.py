@@ -23,10 +23,8 @@ from cell_training import train, test_single, compute_parameters, run_single_rec
 
 import matplotlib.pyplot as plt
 
-import os, psutil
-process = psutil.Process(os.getpid())
-print("Using : ", process.memory_info().rss // 1000000)  # in megabytes 
-print("Available : ", process.memory_info().vms  // 1000000)  # in megabytes 
+import os
+process = None
 
 print(torch.cuda.is_available())
 
@@ -55,9 +53,10 @@ override = False #make this true to always use the same ones
 #check against the sysargs
 parser = argparse.ArgumentParser(description='Data choice, message size and number choice.', exit_on_error=False)
 parser.add_argument('--extension', type=str, default="_random_sample")
-parser.add_argument('--number_of_messages', type=int, default=1)
-parser.add_argument('--size_of_messages', type=int, default=128)
+parser.add_argument('--number_of_messages', type=int, default=2)
+parser.add_argument('--size_of_messages', type=int, default=256)
 parser.add_argument('--epochs', type=int, default=200)
+parser.add_argument('--absolute', type=int, default=0)
 
 args = parser.parse_args()
 
@@ -65,16 +64,19 @@ extension = args.extension
 number_of_messages = args.number_of_messages
 size_of_messages = args.size_of_messages
 epochs = args.epochs
+absolute = args.absolute
 
-model_path = "models/model" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_"
-loss_path = "models/loss" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_"
+model_path = "models/model" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative")
+loss_path = "models/loss" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative")
+
+print("Model path : ", model_path)
 
 data_train, data_test, data_val = load(load_all, extension, pre_separated, override)
 
 # %%
 #INFO : if bg_load is True, this starts the loading, if skipped, bg_loading will take place as soon as a get is called
-rval, edge_index, edge_attr, batch_edge, border, params = data_train.get(0)
-rval, edge_index, edge_attr, batch_edge, border, params = data_test.get(0)
+rval, edge_index, edge_attr, border, params = data_train.get(0)
+rval, edge_index, edge_attr, border, params = data_test.get(0)
 
 print("Is data wrapped ? ", data_train.wrap)
 
@@ -127,29 +129,20 @@ def start(model : GraphEvolution, optimizer : torch.optim.Optimizer, scheduler  
         print("Epoch : ", e, "Test loss : ", test_loss_s, "Test loss recursive : ", test_loss_r)
 
 
-        grapher.plot_losses(title="Training", data=loss_history_train, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_")
-        grapher.plot_losses(title="Testing", data=loss_history_test_recursive, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_")
-        grapher.plot_losses(title="Testing recursive", data=loss_history_test_single, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_")
+        grapher.plot_losses(title="Training", data=loss_history_train, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_") 
+        grapher.plot_losses(title="Testing", data=loss_history_test_recursive, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_") 
+        grapher.plot_losses(title="Testing recursive", data=loss_history_test_single, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_") 
         
         if (e%save == 0) :      
             all_params_out, all_params_true = compute_parameters(model, data_test, device, duration=-1)
-            grapher.plot_params(all_params_out, all_params_true, e, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages))
+            grapher.plot_params(all_params_out, all_params_true, e, extension=extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative"))
         
         if (save and (e%save == 0 or e == epoch-1)) :
             torch.save(model.state_dict(), model_path + str(e) + ".pt")
 
 # %%
-load = False
 
-epoch_to_load = 0
-
-model = GraphEvolution(in_channels=14, out_channels=4, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap)
-#model = GraphEvolution(in_channels=9, out_channels=4, hidden_channels=32, dropout=0.01, edge_dim=2, messages=5, wrap=True)
-#model = GraphEvolutionDiscr(in_channels=9, out_channels=4, hidden_channels=16, dropout=0.01, edge_dim=2, messages=5, wrap=True)
-
-if exists(model_path + str(epoch_to_load) + ".pt") and load :
-    model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
-    print("Loaded model")
+model = GraphEvolution(in_channels=14, out_channels=4, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
 
 # %%
 #might want to investigate AdamP 
@@ -168,26 +161,8 @@ model = model.to(device)
 
 # %%
 start(model, optimizer, scheduler, data_train, data_test, device, \
-        epochs, epoch_to_load, grapher=grapher, save=20, save_datasets=False)
+        epochs, 0, grapher=grapher, save=20, save_datasets=False)
 
 # %%
 all_params_out, all_params_true = compute_parameters(model, data_test, device, duration=-1)
 grapher.plot_params(all_params_out, all_params_true, epochs - 1, extension=extension)
-
-# %%
-loss_history = {'loss_mean' : [], 'loss_log' : [], 'loss' : []}
-loss, out, x = run_single_recursive(model, data_test, 0, device, loss_history, output=True)
-
-if out == None or x == None :
-    raise Exception("No output")
-
-result_name = "models/result_recursive" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + str(epochs-1) + ".pkl"
-
-with open(result_name, "wb") as f:
-    pickle.dump((out, x), f)
-
-animation_name = "models/animation_recursive" + extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + str(epochs-1) + ".mp4"
-make_animation(result_name, animation_name, show_speed=False)
-
-
-

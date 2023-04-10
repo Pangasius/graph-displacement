@@ -103,8 +103,6 @@ class CellGraphDataset(Dataset):
         tau = x.param.tau[0]
         # Active force
         v0 = x.param.factive[0]
-        
-        big_R = x.param.R
 
         #cutoff distance defines the interaction radius. You can assume below:
         cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
@@ -121,13 +119,6 @@ class CellGraphDataset(Dataset):
         if self.wrap :
             rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
         
-            cutoff = cutoff / (border[1] - border[0])
-        else : 
-            
-            rval = (rval - mean) / std
-            
-            cutoff = cutoff / std.mean()
-        
         #Get time and number of cells from shape of position data
         if self.T_limit :
             T = min(rval.shape[0], self.T_limit) #limiting for testing
@@ -143,20 +134,20 @@ class CellGraphDataset(Dataset):
             
         rval = rval[:T,:N,:2]
         
-        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=self.wrap, T=T, N=N, cutoff=cutoff)
+        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=self.wrap, T=T, N=N)
 
-        #additional parameters : tau, epsilon, v0, r
-        params = torch.tensor([tau, epsilon, v0, big_R])
+        #additional parameters : tau, epsilon, v0, r, dt, framerate
+        params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time])
         
         params = torch.cat((params, mean, std, torch.tensor([cutoff])), dim=0).to(torch.float)
         
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff)
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params)
 
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params, cutoff
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params
     
     @staticmethod
-    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, cutoff : float) :
+    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int) :
 
         if not wrap :
             batch = torch.arange(T).repeat_interleave(N).to(torch.long)
@@ -313,7 +304,7 @@ def load(load_all = True, suffix = "", pre_separated = False, override = False) 
             print("Validation data not found")
     else :
         if pre_separated :
-            path = "/scratch/users/nstillman/data-cpp/" #remote for wrapped
+            path = "/scratch/users/nstillman/data-cpp/" 
             
             data_train = CellGraphDataset(root=path + 'train', max_size=1000, inmemory=True, bg_load=True, wrap=True, T_limit=16)
             print("Training data length : ", data_train.len())
@@ -324,7 +315,7 @@ def load(load_all = True, suffix = "", pre_separated = False, override = False) 
             data_val = CellGraphDataset(root=path + 'valid', max_size=50, inmemory=True, bg_load=True, wrap=True, T_limit=8)
             print("Validation data length : ", data_val.len())
         else :
-            path = "/scratch/users/nstillman/open/low_tau_high_v0/"
+            path = "/scratch/users/nstillman/open/high_tau_high_v0/"
             
             data_train, data_test, data_val =  extract_train_test_val(path, max_size=1000, inmemory=True, bg_load=True, wrap=False, T_limit=0)
 
