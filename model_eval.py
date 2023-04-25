@@ -4,7 +4,7 @@ import torch
 import pickle
 
 from cell_training import compute_parameters
-from cell_model import GraphEvolution
+from cell_model import Gatv2Predictor
 
 import matplotlib.pyplot as plt
 
@@ -26,7 +26,7 @@ for filename in os.listdir('models/imported'):
         number_of_messages = int(filename_split[3]) 
         size_of_messages = int(filename_split[4])
         
-        model = GraphEvolution(in_channels=14, out_channels=4, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data.wrap)
+        model = Gatv2Predictor(in_channels=14, out_channels=4, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data.wrap)
         model.load_state_dict(torch.load('models/imported/' + filename))
         model.to(device)
     else:

@@ -1,13 +1,11 @@
-conda create -n env_name python=3.10 cudatoolkit=11.7 matplotlib pytorch pytorch-cuda=11.7 pyg pickleshare cloudpickle networkx ipykernel jupyter pandas pycapnp -c pytorch -c nvidia -c pyg -c conda-forge
+conda create -n env_name python=3.10 cudatoolkit=11.8 matplotlib pytorch pytorch-cuda=11.8 pyg pytorch-cluster pickleshare cloudpickle networkx ipykernel jupyter -c pytorch -c nvidia -c pyg -c conda-forge
 
 or 
 
-conda install cudatoolkit=11.7 matplotlib pytorch pytorch-cuda=11.7 pyg pickleshare cloudpickle networkx ipykernel jupyter pandas pycapnp -c pytorch -c nvidia -c pyg -c conda-forge
+conda install cudatoolkit=11.8 matplotlib pytorch pytorch-cuda=11.8 pyg pytorch-cluster pickleshare cloudpickle networkx ipykernel jupyter -c pytorch -c nvidia -c pyg -c conda-forge
 
 conda install ffmpeg -c conda-forge
 
 pip3 install adamp #this is a pytorch optimizer but not in the official realease
-
-conda install -c conda-forge statsmodels
 
 #also install ffmpeg for video rendering on the os

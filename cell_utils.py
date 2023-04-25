@@ -7,14 +7,31 @@ class GraphingLoss():
     def __init__(self):
         pass
 
-    def plot_losses(self, title : str, data : dict[str, list[float]], extension = "") :
+    def plot_losses(self, title : str, data : dict[str, list[float]], length : int, extension = "") :
         fig = plt.figure()
         ax = fig.add_subplot(111)
         
-        ax.plot(np.log(data["loss_mean"]), label="log(loss_mean)")  
-        ax.plot(data["loss_log"], label="loss_log")
-        ax.plot(data["loss"], label="loss")
-
+        l_means = np.log(data["loss_mean"]).reshape(-1, length)
+        l_means_mean = np.mean(l_means, axis=1)
+        l_means_std = np.std(l_means, axis=1)
+        
+        l_logs = np.array(data["loss_log"]).reshape(-1, length)
+        l_logs_mean = np.mean(l_logs, axis=1)
+        l_logs_std = np.std(l_logs, axis=1)
+        
+        l = np.array(data["loss"]).reshape(-1, length)
+        l_mean = np.mean(l, axis=1)
+        l_std = np.std(l, axis=1)
+        
+        #plot the means and the std as shaded areas
+        ax.plot(l_means_mean, label="log(loss mean)", color="red")
+        ax.fill_between(np.arange(len(l_means_mean)), l_means_mean - l_means_std, l_means_mean + l_means_std, alpha=0.2, color="red")
+         
+        ax.plot(l_logs_mean, label="loss log", color="green")
+        ax.fill_between(np.arange(len(l_logs_mean)), l_logs_mean - l_logs_std, l_logs_mean + l_logs_std, alpha=0.2, color="green")
+        
+        ax.plot(l_mean, label="loss", color="blue")
+        ax.fill_between(np.arange(len(l_mean)), l_mean - l_std, l_mean + l_std, alpha=0.2, color="blue")
         
         ax.legend(loc="upper left") 
         ax.set_title(title)

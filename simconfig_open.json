@@ -1,0 +1,99 @@
+{
+    "initseed": 0,
+    "outputfolder": "data/open/",
+    "filename": "model0-open",
+    "output_time": 200, 
+    "output_type": "none",
+    "t_final":  20000, 
+    "popdynfreq": 10000000,
+    "zaptime": 10000000, 
+    
+    "phi": 1,
+    "R": 1,
+
+    "Lx": 1000000,
+    "Ly": 1000000,
+
+    "dt": 0.01,
+    "dim": 2,
+    "circle_r": 25,
+    "eps": 0.001,
+    "N": 100,
+    "init_opt": "bounded",
+    "bc_opt": "periodic",
+    "Ntracer": 100,
+    "Nstem": 0,
+    "btype": 0,
+    "flag": 0,
+    "type": 0,
+    "poly": 0.3,
+    "cutoff": 3,
+    "ntypes": 1,
+    "fade": 1,
+    "pairstiff": [
+        [
+            1,
+            1,
+            1
+        ],
+        [
+            1,
+            1,
+            1
+        ],
+        [
+            1,
+            1,
+            1
+        ]
+    ],
+
+    "pairatt": [
+        [
+            0,
+            0,
+            0
+        ],
+        [
+            0,
+            0,
+            0
+        ],
+        [
+            0,
+            0,
+            0
+        ]
+    ],
+    "factive": [
+        1.0,
+        1.0,
+        1.0
+    ],
+    "zeta": [
+        1,
+        1,
+        1
+    ],
+    "tau": [
+        10,
+        10,
+        10
+    ],
+    "alignment": [
+        0,
+        0,
+        0
+    ],
+    "deathrate": [
+        0.0,
+        0,
+        0.0
+    ],
+    "divrate": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "maxZ": 6
+}

@@ -1,9 +1,10 @@
 import os.path as osp
 import glob
 
-from torch_geometric.data import Dataset
-from torch_geometric.nn import radius_graph, radius_graph, knn_graph
 import torch
+
+from torch_geometric.data import Dataset
+from torch_geometric.nn import knn_graph
 
 import pickle
 import lzma
@@ -103,18 +104,17 @@ class CellGraphDataset(Dataset):
         tau = x.param.tau[0]
         # Active force
         v0 = x.param.factive[0]
+        #stiffness
+        k = x.param.pairstiff[0][0]
 
         #cutoff distance defines the interaction radius. You can assume below:
-        cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
+        #cutoff = 2*(x.param.cutoffZ + 2*x.param.pairatt[0][0])
         #Get position data
         rval = torch.tensor(x.rval)
         
         #normalize the data
         
         border = torch.tensor([rval[:,:,0].min(), rval[:,:,0].max(), rval[:,:,1].min(), rval[:,:,1].max()])
-        
-        mean = torch.tensor([rval[:,:,0].mean(), rval[:,:,1].mean()])
-        std = torch.tensor([rval[:,:,0].std(), rval[:,:,1].std()])
         
         if self.wrap :
             rval = (rval - rval.min(dim=0)[0].min(dim=0)[0]) / (rval.max(dim=0)[0].max(dim=0)[0] - rval.min(dim=0)[0].min(dim=0)[0])
@@ -137,9 +137,7 @@ class CellGraphDataset(Dataset):
         rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=self.wrap, T=T, N=N)
 
         #additional parameters : tau, epsilon, v0, r, dt, framerate
-        params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time])
-        
-        params = torch.cat((params, mean, std, torch.tensor([cutoff])), dim=0).to(torch.float)
+        params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time, k]).to(torch.float)
         
         if self.memorize :
             self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params)
@@ -202,7 +200,6 @@ class CellGraphDataset(Dataset):
         #add the degree of each node using the edge_index
         rval = torch.cat((rval, torch.zeros((T, N, 1), dtype=torch.float)), dim=2)
         rval[:,:,4] = torch.bincount(edge_index[0, :], minlength=T*N).reshape(T, N)
-        
         
         return rval, edge_index, edge_attr
     
