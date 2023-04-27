@@ -85,7 +85,11 @@ class Gatv2Predictor(torch.nn.Module):
         return y
     
     def forward_postprocess(self, x, y, xshape) :
-        means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
+        if not self.absolute :
+            means = y[:,:,:self.out_channels//2]
+        else :
+            means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
+            
         log_std = y[:,:,self.out_channels//2:]
         
         out = torch.cat((means, log_std), dim=2)
@@ -144,7 +148,7 @@ class Gatv2Predictor(torch.nn.Module):
                 if param.grad != None :
                     print(name, param.grad.mean())
     
-    def loss_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
+    def loss_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', add_back=None):
         #pred is a tensor of shape (T, N, 8)
         #target is a tensor of shape (T, N, 4)
         
@@ -152,37 +156,53 @@ class Gatv2Predictor(torch.nn.Module):
         #and compute the loss
         std = torch.exp(pred[:,:,self.out_channels//2:])
 
-        return self.diff(pred, std, target, loss_history=loss_history, distrib=distrib)
+        return self.diff(pred, std, pred[:,:,self.out_channels//2:], target, loss_history=loss_history, distrib=distrib, add_back=add_back)
+    
+    def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
+        if target.shape[0] != pred.shape[0] + 1 :
+            raise Exception("target.shape[0] != pred.shape[0] + 1")
+        
+        previous = target[:-1].to(pred.device)
+        now = target[1:].to(pred.device)
+        
+        targ = now - previous
+        
+        return self.loss_direct(pred, targ, loss_history=loss_history, distrib=distrib, add_back=previous)
     
     def loss_recursive(self, pred_distr, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
         std = torch.exp(pred_distr[:,:,self.out_channels//2:])
         
-        return self.diff(pred, std, target, loss_history=loss_history, distrib=distrib)
+        return self.diff(pred, std, pred_distr[:,:,self.out_channels//2:], target, loss_history=loss_history, distrib=distrib)
+    
+    def loss_relative_recursive(self, pred_distr, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
+        pass
 
-    def diff(self, pred, std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}) :
+    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None) :
         target = target.to(pred.device)
-        
+
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
         #slide 16
+        
+        std = std + 1e-6
             
         if distrib == 'normal' :
             diff = (pred[:,:,:self.out_channels//2] - target)**2
-            
+
             if self.wrap :
                 #https://www.geogebra.org/m/fvsyepzd
                 diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
 
             loss_mean = diff / (2 * std**2) 
-            loss_log = torch.log(std) / 2
+            loss_log = log_std
         elif distrib == 'laplace' :
             diff = torch.abs((pred[:,:,:self.out_channels//2] - target))
-            
+
             if self.wrap :
                 #https://www.geogebra.org/m/fvsyepzd
                 diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
             
-            loss_mean = torch.sqrt(torch.tensor(2)) * diff / (std)
-            loss_log = torch.log(std) / 2
+            loss_mean = diff / (std)
+            loss_log = log_std
         else :
             raise ValueError('distrib must be normal or laplace')
         
@@ -191,6 +211,9 @@ class Gatv2Predictor(torch.nn.Module):
         loss_history["loss_mean"].append(loss_mean.mean().item())
         loss_history["loss_log"].append(loss_log.mean().item())
         loss_history["loss"].append(torch.mean(loss_mean + loss_log).item())
+        
+        if add_back != None :
+            pred[:,:,:self.out_channels//2] = pred[:,:,:self.out_channels//2] + add_back
 
         if self.wrap :
             return loss.requires_grad_(), pred[:,:,:self.out_channels//2] % 1
@@ -322,7 +345,7 @@ class GraphEvolutionDiscr(Gatv2Predictor):
         super(GraphEvolutionDiscr, self).__init__(in_channels, out_channels, hidden_channels, dropout=dropout, edge_dim=edge_dim, messages=messages, wrap=wrap)
         self.discr = Gatv2PredictorDiscr(out_channels // 2, hidden_channels, dropout=dropout)
         
-    def diff_loss(self, pred, std, target, all_edges, grad=True):
+    def diff_loss(self, pred, std, log_std, target, all_edges, grad=True):
         """Uses the discriminator to compute the loss"""
         #pred is a tensor of shape (T, N, 8)
         #target is a tensor of shape (T, N, 4)
@@ -356,7 +379,7 @@ class GraphEvolutionDiscr(Gatv2Predictor):
         loss_critic = torch.mean(disc_out) - torch.mean(disc_true) + 10 * norm_grad
         
         loss_gen = -torch.mean(disc_out) + self.diff(pred,\
-                                                     std,\
+                                                     std, log_std,\
                                                      target)[0]
     
         loss = loss_gen + 5 * loss_critic
@@ -366,9 +389,9 @@ class GraphEvolutionDiscr(Gatv2Predictor):
     def loss_direct(self, pred, target, all_edges, grad=True):
         std = torch.exp(pred[:,:,self.out_channels//2:])
         
-        return self.diff_loss(pred, std, target, all_edges, grad=grad)
+        return self.diff_loss(pred, std, pred[:,:,self.out_channels//2:], target, all_edges, grad=grad)
     
     def loss_recursive(self, pred_distr, pred, target, all_edges, grad=True):
         std = torch.exp(pred_distr[:,:,self.out_channels//2:])
         
-        return self.diff_loss(pred, std, target, all_edges, grad=grad)
+        return self.diff_loss(pred, std, pred[:,:,self.out_channels//2:], target, all_edges, grad=grad)
