@@ -11,6 +11,8 @@ import lzma
 
 import os
 
+import matplotlib.pyplot as plt
+
 import threading
 #find /scratch/users/nstillman/data-cpp/train/ -name "*fast4p.p" -type f  | head | xargs du
 """
@@ -214,6 +216,29 @@ class CellGraphDataset(Dataset):
             else :
                 self.waiting_for = -2
                 break
+            
+    def speed_distribution(self, bins=100, only_one=-1) :
+        if only_one == -1 :
+            speeds_x = torch.cat([self.memory.get(self.paths.fget()[i])[0][:,:,2].reshape(-1) for i in range(self.len())])
+            
+            speeds_y = torch.cat([self.memory.get(self.paths.fget()[i])[0][:,:,3].reshape(-1) for i in range(self.len())])
+        else :
+            speeds_x = torch.cat([self.memory.get(self.paths.fget()[i])[0][only_one,:,2].reshape(-1) for i in range(self.len())])
+            
+            speeds_y = torch.cat([self.memory.get(self.paths.fget()[i])[0][only_one,:,3].reshape(-1) for i in range(self.len())])
+                    
+        speeds = torch.sqrt(speeds_x**2 + speeds_y**2)
+        
+        f, ax = plt.subplots(1, 3, figsize=(10, 3))
+        ax[0].hist(speeds_x, bins=bins)
+        ax[0].set_title("Speed distribution in x")
+        ax[1].hist(speeds_y, bins=bins)
+        ax[1].set_title("Speed distribution in y")
+        ax[2].hist(speeds, bins=bins)
+        ax[2].set_title("Speed distribution")
+        f.savefig("speed_distribution.png")
+        
+         
 
     def get(self, idx):
         if self.bg_load and not self.bg_load_running :

@@ -37,7 +37,7 @@ class GraphingLoss():
         ax.set_title(title)
         fig.canvas.draw()
 
-        plt.savefig("Losses" + extension + title.replace(" ", "") + ".pdf", format="pdf")
+        plt.savefig("models/Losses" + extension + title.replace(" ", "") + ".pdf", format="pdf")
         plt.close()
         
     def plot_params(self, params_out : list[dict[str, torch.Tensor]], params_true : list[dict[str, torch.Tensor]], epoch : int = 0, extension = "") :
@@ -101,9 +101,9 @@ def make_animation(saved_result, animation_name, show_speed = True) :
     else :
         out, x = saved_result
 
-    figure = plt.figure()
-    ax_true = figure.add_subplot(211)
-    ax_pred = figure.add_subplot(212)
+    figure, ax = plt.subplots(ncols=2, sharey=True, figsize=(10, 5))
+    ax_true = ax[0]
+    ax_pred = ax[1]
 
     left = x[:,:,0].min()
     right = x[:,:,0].max()
@@ -140,7 +140,7 @@ def make_animation(saved_result, animation_name, show_speed = True) :
 
             ax.legend(loc="upper left")
 
-    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
+    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=35)
 
     #we can show the animation with the following
     #video = anim_created.to_html5_video()

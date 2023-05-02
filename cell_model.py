@@ -39,8 +39,6 @@ class Gatv2Predictor(torch.nn.Module):
         
         self.decoder_resize = torch.nn.Linear(self.hidden_channels * self.message_passers_heads, self.out_channels)
         
-        self.absolute = absolute
-        
     def message_passers_constr(self) :
         self.message_passers = torch.nn.ModuleList()
         for i in range(self.messages):
@@ -85,11 +83,8 @@ class Gatv2Predictor(torch.nn.Module):
         return y
     
     def forward_postprocess(self, x, y, xshape) :
-        if not self.absolute :
-            means = y[:,:,:self.out_channels//2]
-        else :
-            means = y[:,:,:self.out_channels//2] + x.reshape(xshape)[:,:,:self.out_channels//2]
-            
+        means = y[:,:,:self.out_channels//2]
+
         log_std = y[:,:,self.out_channels//2:]
         
         out = torch.cat((means, log_std), dim=2)
@@ -147,18 +142,8 @@ class Gatv2Predictor(torch.nn.Module):
             if param.requires_grad:
                 if param.grad != None :
                     print(name, param.grad.mean())
-    
-    def loss_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', add_back=None):
-        #pred is a tensor of shape (T, N, 8)
-        #target is a tensor of shape (T, N, 4)
-        
-        #we will draw a sample from the normal distribution
-        #and compute the loss
-        std = torch.exp(pred[:,:,self.out_channels//2:])
 
-        return self.diff(pred, std, pred[:,:,self.out_channels//2:], target, loss_history=loss_history, distrib=distrib, add_back=add_back)
-    
-    def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
+    def loss_relative_direct(self, pred, pred_before, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean'):
         if target.shape[0] != pred.shape[0] + 1 :
             raise Exception("target.shape[0] != pred.shape[0] + 1")
         
@@ -167,17 +152,11 @@ class Gatv2Predictor(torch.nn.Module):
         
         targ = now - previous
         
-        return self.loss_direct(pred, targ, loss_history=loss_history, distrib=distrib, add_back=previous)
+        std = torch.exp(pred[:,:,self.out_channels//2:])
     
-    def loss_recursive(self, pred_distr, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
-        std = torch.exp(pred_distr[:,:,self.out_channels//2:])
-        
-        return self.diff(pred, std, pred_distr[:,:,self.out_channels//2:], target, loss_history=loss_history, distrib=distrib)
+        return self.diff(pred, std, pred[:,:,self.out_channels//2:], targ, loss_history=loss_history, distrib=distrib, add_back=pred_before, aggr=aggr)
     
-    def loss_relative_recursive(self, pred_distr, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal'):
-        pass
-
-    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None) :
+    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None, aggr = 'mean') :
         target = target.to(pred.device)
 
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
@@ -206,9 +185,14 @@ class Gatv2Predictor(torch.nn.Module):
         else :
             raise ValueError('distrib must be normal or laplace')
         
-        loss = torch.max(loss_mean + loss_log)
+        if aggr == 'mean' :
+            loss = torch.mean(loss_mean + loss_log)
+        elif aggr == 'max' :
+            loss = 0.30 * torch.max(loss_mean + loss_log) + 0.70 * torch.mean(loss_mean + loss_log)
+        else :
+            raise ValueError('aggr must be mean or max')
         
-        loss_history["loss_mean"].append(loss_mean.mean().item())
+        loss_history["loss_mean"].append(diff.mean().item())
         loss_history["loss_log"].append(loss_log.mean().item())
         loss_history["loss"].append(torch.mean(loss_mean + loss_log).item())
         
@@ -225,17 +209,7 @@ class Gatv2Predictor(torch.nn.Module):
         
         all_params = {}
         
-        x = x[:,:,:4].to(x.device)
-        
-        speed_diff_x = torch.mean(x[:,:,2], dim=1)
-        speed_diff_y = torch.mean(x[:,:,3], dim=1)
-        all_params['speed_mu_x'] = speed_diff_x
-        all_params['speed_mu_y'] = speed_diff_y
-        
-        speed_spread_x = torch.log(torch.std(x[:,:,2], dim=1))
-        speed_spread_y = torch.log(torch.std(x[:,:,3], dim=1))
-        all_params['log(speed_std_x)'] = speed_spread_x
-        all_params['log(speed_std_y)'] = speed_spread_y
+        x = x[:,:,:2].to(x.device)
         
         mean_mu_x =   torch.mean(x[:,:,0], dim=1)
         mean_mu_y =  torch.mean(x[:,:,1], dim=1)
@@ -249,7 +223,6 @@ class Gatv2Predictor(torch.nn.Module):
 
         return all_params
         
-    
     def draw(self, pred, distrib='normal') :
         std = torch.exp(pred[:,:,self.out_channels//2:])
         
