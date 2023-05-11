@@ -7,7 +7,7 @@ import sys
 import os
 from genericpath import exists
 
-from cell_dataset import CellGraphDataset, load, single_overfit_dataset
+from cell_dataset import CellGraphDataset, loadDataset, single_overfit_dataset
 from cell_model import Gatv2Predictor, Gatv2PredictorDiscr, ConvPredictor
 from cell_utils import GraphingLoss, make_animation
 from cell_training import train, test_single, compute_parameters_draw, run_single_recursive, run_single_recursive_draw, predict
@@ -44,9 +44,11 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
     print(name_complete)
 
-    model_path = "models/model" + name_complete
+    model_path = "models/out_8_eps_-2/" + distrib + "/" + extension[6:] + "/model" + name_complete
+    
+    print(model_path)
 
-    data_train, data_test, data_val = load(load_all, extension, pre_separated, override)
+    data_train, data_test, data_val = loadDataset(load_all, extension, pre_separated, override)
 
     print("\nData loaded\n")
 
@@ -88,7 +90,15 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
             if (save and (e%save == 0 or e == epoch-1)) :
                 torch.save(model.state_dict(), model_path + str(e) + ".pt")
                 
-    model = Gatv2Predictor(in_channels=12, out_channels=4, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
+    model = Gatv2Predictor(in_channels=12, out_channels=8, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
+    
+    #Load model
+    
+    epoch_to_load = 100
+    if exists(model_path + str(epoch_to_load) + ".pt") :
+        model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
+        print("Loaded model")
+    
 
     #might want to investigate AdamP 
     optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
@@ -100,21 +110,39 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
     model = model.to(device)
 
+
     start(model, optimizer, scheduler, data_train, data_test, device, \
             epochs, 0, grapher=grapher, save=50, save_datasets=False)
 
     print("\nFinished training\n")
 
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_y, data_x = predict(model, data_test, device, -1, recursive=True, distrib=distrib)
     
-    data_y = torch.cat((data_y[:,1:], data_y[:,1:,:,:] - data_y[:,:-1,:,:]), dim=3)
-    data_x = torch.cat((data_x[:,1:], data_x[:,1:,:,:] - data_x[:,:-1,:,:]), dim=3)
-    
+
+    data_y = torch.cat((data_y[:,1:,:,:2], data_y[:,1:,:,:2] - data_y[:,:-1,:,:2]), dim=3)
+    data_x = torch.cat((data_x[:,1:,:,:2], data_x[:,1:,:,:2] - data_x[:,:-1,:,:2]), dim=3)
+
+
     #here we skip the first of the data because it has 0 speed and it makes the plot crash (1/0)
     data_y = data_y.cpu().numpy() #model
     data_x = data_x.cpu().numpy() #data
+    
+    #make an animation of the prediction
+    make_animation((data_y[0], data_x[0]), model_path + ".gif", True)
+    
+    #we will show the predicted distribution of speeds
+    speed_y_axis0 = data_y[:,:,:,2].flatten()
+    speed_y_axis1 = data_y[:,:,:,3].flatten()
+    speed_y_total = np.sqrt(speed_y_axis0**2 + speed_y_axis1**2)
+    f, ax = plt.subplots(1, 3, figsize=(10, 3))
+    ax[0].hist(speed_y_axis0, bins=100)
+    ax[0].set_title("Speed distribution in x")
+    ax[1].hist(speed_y_axis1, bins=100)
+    ax[1].set_title("Speed distribution in y")
+    ax[2].hist(speed_y_total, bins=100)
+    ax[2].set_title("Speed distribution")
+    f.savefig("speed_distribution " + name_complete + ".png")
 
     class Parameters(object):
         def __init__(self, p):
@@ -352,6 +380,8 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.title('Mean square displacement')
     plt.legend()
     fig.savefig('msd' + name_complete + '.pdf')
+
+
 
 if __name__ == "__main__" :
 

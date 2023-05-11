@@ -9,3 +9,9 @@ conda install ffmpeg -c conda-forge
 pip3 install adamp #this is a pytorch optimizer but not in the official realease
 
 #also install ffmpeg for video rendering on the os
+
+
+
+#for real data
+
+conda install -c conda-forge napari btrack h5py

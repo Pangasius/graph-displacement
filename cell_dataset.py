@@ -1,5 +1,7 @@
 import os.path as osp
 import glob
+import btrack
+import numpy as np
 
 import torch
 
@@ -14,6 +16,9 @@ import os
 import matplotlib.pyplot as plt
 
 import threading
+
+from skimage.io import imread
+
 #find /scratch/users/nstillman/data-cpp/train/ -name "*fast4p.p" -type f  | head | xargs du
 """
 27804   ./p000_r004_sb015_2148010_b039_fast4p.p                                                                         
@@ -136,7 +141,7 @@ class CellGraphDataset(Dataset):
             
         rval = rval[:T,:N,:2]
         
-        rval, edge_index, edge_attr = self.get_edges(rval, self.max_degree, wrap=self.wrap, T=T, N=N)
+        rval, edge_index, edge_attr = self.get_edges(rval[:,:,2], self.max_degree, wrap=self.wrap, T=T, N=N)
 
         #additional parameters : tau, epsilon, v0, r, dt, framerate
         params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time, k]).to(torch.float)
@@ -147,15 +152,22 @@ class CellGraphDataset(Dataset):
         return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params
     
     @staticmethod
-    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int) :
+    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, masks : torch.Tensor | None) :
 
         if not wrap :
             batch = torch.arange(T).repeat_interleave(N).to(torch.long)
+            
+            if masks is not None :
+                rval_masked = torch.where(masks.to(torch.bool), torch.tensor([np.nan, np.nan]), rval)
+            else :
+                rval_masked = rval
         
-            rval = rval.reshape(T*N, -1)
+            rval_masked = rval_masked.reshape(T*N, -1)
             
             #edge_index = radius_graph(rval, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
-            edge_index = knn_graph(rval, k = max_degree, batch=batch, loop=True, flow="source_to_target")
+            edge_index = knn_graph(rval_masked, k = max_degree, batch=batch, loop=True, flow="source_to_target")
+            
+            rval = rval.reshape(T*N, -1)
             
             edge_attr = (rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]).reshape(-1,2)
         else :
@@ -198,10 +210,6 @@ class CellGraphDataset(Dataset):
         if wrap :
             #substract 1 to the speeds if they are greater than 0.5
             rval[:,:,2:] = rval[:,:,2:] - (rval[:,:,2:] > 0.5).float() + (rval[:,:,2:] < -0.5).float()
-            
-        #add the degree of each node using the edge_index
-        rval = torch.cat((rval, torch.zeros((T, N, 1), dtype=torch.float)), dim=2)
-        rval[:,:,4] = torch.bincount(edge_index[0, :], minlength=T*N).reshape(T, N)
         
         return rval, edge_index, edge_attr
     
@@ -294,8 +302,124 @@ class CellGraphDataset(Dataset):
         
         return dataset
             
+            
+class RealCellGraphDataset(CellGraphDataset):
+    def find_data_and_masks(self, path):
+        with btrack.dataio.HDF5FileHandler(path, 'r', obj_type='obj_type_1') as reader:
+            tracks = reader.tracks
+        
+        cells = []
+        for cell in tracks :
+            if cell.t == 0 :
+                continue
+            
+            t = np.array(cell['t'], dtype=np.float32).reshape(-1,1)
+            x = np.array(cell['x'], dtype=np.float32).reshape(-1,1)
+            y = np.array(cell['y'], dtype=np.float32).reshape(-1,1)
+            ori =  np.array(cell['orientation'], dtype=np.float32).reshape(-1,1)
+            major = np.array(cell['major_axis_length'], dtype=np.float32).reshape(-1,1)
+            minor = np.array(cell['minor_axis_length'], dtype=np.float32).reshape(-1,1)
+            area = np.array(cell['area'], dtype=np.float32).reshape(-1,1)
+            
+            individual_cell = np.concatenate((t,x,y,ori,major,minor,area), axis=1)
 
-def load(load_all = True, suffix = "", pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
+            cells.append(individual_cell)
+            
+        for cell in cells :
+            #interpolate missing frames
+            for t in range(cell.shape[0]) :
+                if np.isnan(cell[t,:]).any() :
+                    if t == 0 :
+                        cell[t] = cell[t+1]
+                    elif t == cell.shape[0]-1 :
+                        cell[t] = cell[t-1]
+                    else :
+                        cell[t] = (cell[t-1] + cell[t+1])/2
+                        
+        #remove all cells that still do have nan
+        cells_no_gap = []
+        end = 0
+        for cell in cells :
+            if np.isnan(cell).any() :
+                continue
+            else :
+                cells_no_gap.append(cell)
+                if cell[-1,0] > end :
+                    end = cell[-1,0]
+
+        cells_aligned = []
+        masks = []
+        #make a sparse matrix with all the cells
+        for cell in cells_no_gap :
+            mask = np.ones((int(end + 1), 1))
+            cell_aligned = np.zeros((int(end + 1), 6))
+            for t in range(cell.shape[0]) :
+                cell_aligned[int(cell[t,0]),:] = cell[t,1:]
+                mask[int(cell[t,0]),:] = 0
+                
+            cells_aligned.append(cell_aligned)
+            masks.append(mask)
+            
+        cells_aligned = np.array(cells_aligned)
+        masks = np.array(masks)
+
+        #exchange the first and second axis
+        cells_aligned = np.swapaxes(cells_aligned, 0, 1)
+        masks = np.swapaxes(masks, 0, 1)
+        
+        cells_aligned = torch.tensor(cells_aligned)
+        masks = torch.tensor(masks)
+        
+        return cells_aligned, masks
+    
+    def process_file(self, path : str):
+        if self.memory.get(path) is not None :
+            return self.memory[path]
+        
+        rval, masks = self.find_data_and_masks(path)
+        
+        T = rval.shape[0]
+        N = rval.shape[1]
+        
+        rval_position = rval[:,:,:2]
+        
+        rval_position, edge_index, edge_attr = self.get_edges(rval_position, self.max_degree, wrap=self.wrap, T=T, N=N, masks=masks)
+        
+        rval = torch.cat((rval_position, rval[:,:,2:]), dim=2)
+
+        if self.memorize :
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks)
+
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks
+                
+    class each_path():
+        def __init__(self, root : str | list[str], max_size : int):
+            self.root = root
+            self.max_size = max_size
+            
+            if type(root) is str:
+                self._each_path = self.read()
+            else :
+                self._each_path = root
+            
+        def read(self):
+            relative = [s.replace('\\', '/') for s in glob.glob(str(self.root) + '/*.h5')]
+            print(relative)
+            print(self.root)
+            relative.sort()
+            max_size = min(self.max_size, len(relative))
+            relative = relative[:max_size]
+            absolute = [osp.abspath(s) for s in relative]
+            return absolute
+
+        def fset(self, value):
+            self._each_path = value
+        
+        def fget(self):
+            return self._each_path
+    
+
+def loadDataset(load_all = True, suffix = "", pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
     """_summary_
 
     Args:
@@ -390,5 +514,24 @@ def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=F
     train_dataset = CellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
     test_dataset = CellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
     val_dataset = CellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    
+    return train_dataset, test_dataset, val_dataset
+
+def extract_real_train_test_val(root, inmemory=False, bg_load=False, wrap=False, T_limit=0) :
+    #get all the files
+    relative = [s.replace('\\', '/') for s in glob.glob(str(root) + '/*.h5')]
+    max_size = min(4, len(relative))
+    relative = relative[:max_size]
+    absolute = [osp.abspath(s) for s in relative]
+    absolute.sort(key=hash)
+
+    train = absolute[:2]
+    test = absolute[2:3]
+    val = absolute[3:4]
+    
+    #create the datasets
+    train_dataset = RealCellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    test_dataset = RealCellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
+    val_dataset = RealCellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
     
     return train_dataset, test_dataset, val_dataset

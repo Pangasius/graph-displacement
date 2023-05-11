@@ -1,6 +1,6 @@
 import torch        
 
-from cell_dataset import CellGraphDataset
+from cell_dataset import CellGraphDataset, RealCellGraphDataset
 from cell_model import Gatv2Predictor, GraphEvolutionDiscr
 
 import psutil
@@ -28,13 +28,25 @@ def compute_parameters_draw(model : Gatv2Predictor, data : CellGraphDataset, dev
     with torch.no_grad() :
 
         for i in range(data.len()) :
-            x, edge_index, edge_attr, border, params = data.get(i)
-    
+            if isinstance(data, CellGraphDataset) :
+                x, edge_index, edge_attr, border, params = data.get(i)
+                
+                params = params.to(device)
+                
+                masks = None
+                
+            elif isinstance(data, RealCellGraphDataset) :
+                x, edge_index, edge_attr, masks = data.get(i)
+                
+                params = None
+            else :
+                raise ValueError("The data type is not supported")
+
             xshape = x.shape
-            
+
             edge_index = edge_index.to(device)
             edge_attr = edge_attr.to(device)
-            params = params.to(device)
+    
 
             #we don't want to predict the last step since we wouldn't have the data for the loss
             #and for the first point we don't have the velocity
@@ -50,16 +62,18 @@ def compute_parameters_draw(model : Gatv2Predictor, data : CellGraphDataset, dev
             for current_time in range(1, 1 + duration) : 
                 input_x_before = input_x.clone().to(device)
                 input_x = model(input_x.to(device), edge_index.to(device), edge_attr.to(device), params)
-                input_x_clone = input_x.clone()
 
+                input_x_before[:,:,:model.out_channels // 2] = model.draw(input_x[:,:,:model.out_channels], distrib=distrib).to(device) + input_x_before[:, :, :model.out_channels // 2]
                 
-                input_x_drawn = model.draw(input_x[:,:,:model.out_channels], distrib=distrib)
-                input_x_clone[:,:,:model.out_channels // 2] = input_x_drawn[:,:,:model.out_channels // 2] + input_x_before[:, :, :model.out_channels // 2].to(device)
-                
-                out = torch.cat((out, input_x_clone[:,:,:model.out_channels // 2]), dim=0)
+                out = torch.cat((out, input_x_before[:,:,:model.out_channels // 2]), dim=0)
 
-                input_x, edge_index, edge_attr = data.get_edges(input_x_clone[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1])
-                input_x[:,:,:model.out_channels // 2] = input_x_clone[:,:,:model.out_channels // 2]
+                _, edge_index, edge_attr = data.get_edges(input_x_before[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1], masks=masks)
+                
+                #if we don't predict the speeds we need to compute the difference manually
+                if model.out_channels == 4 :
+                    input_x_before[:,:,2:4] = input_x[:,:,:2]
+                            
+                input_x = input_x_before
             
             #get the dictionary of parameters
             all_params_out = model.in_depth_parameters(out)
@@ -79,13 +93,25 @@ def compute_parameters_draw(model : Gatv2Predictor, data : CellGraphDataset, dev
 
 #this runs a single batch through the model and returns the loss and the output
 def run_single(model : Gatv2Predictor, data , i : int, device : torch.device, duration : int = -1, output = False, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean') :
-    x, edge_index, edge_attr, border, params = data.get(i)
-
+    if isinstance(data, CellGraphDataset) :
+        
+        x, edge_index, edge_attr, border, params = data.get(i)
+        
+        params = params.to(device)
+        
+        masks = None
+        
+    elif isinstance(data, RealCellGraphDataset) :
+        x, edge_index, edge_attr, masks = data.get(i)
+        
+        params = None
+    else :
+        raise ValueError("The data type is not supported")
+    
     xshape = x.shape
-
+        
     edge_index = edge_index.to(device)
     edge_attr = edge_attr.to(device)
-    params = params.to(device)
     x = x.to(device)
     
     if duration > xshape[0] - 2 or duration < 1 :
@@ -103,12 +129,10 @@ def run_single(model : Gatv2Predictor, data , i : int, device : torch.device, du
     
     out = model(x[start_time + 1:start_time + duration + 1], edge_index, edge_attr[mask], params)
     
-    loss, out = model.loss_relative_direct(out, x[start_time + 1:start_time + duration + 1, :, :model.out_channels // 2], x[start_time + 2 - 1:start_time + duration + 2,:, :model.out_channels // 2], loss_history = loss_history, distrib=distrib, aggr=aggr)
+    loss, out = model.loss_relative_direct(out, x[start_time + 1:start_time + duration + 1, :, :model.out_channels // 2], x[start_time + 2 - 1:start_time + duration + 2,:, :model.out_channels // 2], loss_history = loss_history, distrib=distrib, aggr=aggr, masks=masks)
 
     if output :
-        if data.wrap :
-            x, out = denorm(x, out, duration, border, device)
-        
+
         return loss, out, x
     else :
         return loss, None, None
@@ -116,13 +140,24 @@ def run_single(model : Gatv2Predictor, data , i : int, device : torch.device, du
 #this runs a single batch through the model and returns the loss and the output
 #however, it recursively predicts the next step using the previous prediction
 def run_single_recursive_draw(model : Gatv2Predictor, data, i : int, device : torch.device, duration : int = -1, output=False, distrib='normal') :
-    x, edge_index, edge_attr, border, params = data.get(i)
+    if isinstance(data, CellGraphDataset) :
+        x, edge_index, edge_attr, border, params = data.get(i)
+        
+        params = params.to(device)
+        
+        masks = None
+        
+    elif isinstance(data, RealCellGraphDataset) :
+        x, edge_index, edge_attr, masks = data.get(i)
+        
+        params = None
+    else :
+        raise ValueError("The data type is not supported")
 
     xshape = x.shape
 
     edge_index = edge_index.to(device)
     edge_attr = edge_attr.to(device)
-    params = params.to(device)
     
     if duration > xshape[0] - 2 or duration < 1 :
         duration = xshape[0] - 2
@@ -142,36 +177,46 @@ def run_single_recursive_draw(model : Gatv2Predictor, data, i : int, device : to
     for current_time in range(start_time + 1, start_time + 1 + duration) :
         input_x_before = input_x.clone().to(device)
         input_x = model(input_x.to(device), edge_index.to(device), edge_attr.to(device), params)
-        input_x_clone = input_x.clone()
 
-
-        input_x_drawn = model.draw(input_x[:,:,:model.out_channels], distrib=distrib)
-        input_x_clone[:,:,:model.out_channels // 2] = input_x_drawn[:,:,:model.out_channels // 2] + input_x_before[:, :, :model.out_channels // 2].to(device)
+        input_x_before[:,:,:model.out_channels // 2] = model.draw(input_x[:,:,:model.out_channels], distrib=distrib).to(device) + input_x_before[:, :, :model.out_channels // 2]
         
-        out = torch.cat((out, input_x_clone[:,:,:model.out_channels // 2]), dim=0)
+        out = torch.cat((out, input_x_before[:,:,:model.out_channels // 2]), dim=0)
 
-        input_x, edge_index, edge_attr = data.get_edges(input_x_clone[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1])
-        input_x[:,:,:model.out_channels // 2] = input_x_clone[:,:,:model.out_channels // 2]
+        _, edge_index, edge_attr = data.get_edges(input_x_before[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1], masks=masks)
+        
+        #if we don't predict the speeds we need to compute the difference manually
+        if model.out_channels == 4 :
+            input_x_before[:,:,2:4] = input_x[:,:,:2]
+                    
+        input_x = input_x_before
         
     #This should never be used in training so the loss doesn't exist
     loss = torch.nan
 
     if output :
-        if data.wrap :
-            x, out = denorm(x, out, duration, border, device)
-        
         return loss, out, x[start_time + 1:start_time + duration + 1, :, :model.out_channels // 2]
     else :
         return loss, None, None
     
 def run_single_recursive(model : Gatv2Predictor, data, i : int, device : torch.device, duration : int = -1, output=False, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean') :
-    x, edge_index, edge_attr, border, params = data.get(i)
+    if isinstance(data, CellGraphDataset) :
+        x, edge_index, edge_attr, border, params = data.get(i)
+        
+        params = params.to(device)
+        
+        masks = None
+        
+    elif isinstance(data, RealCellGraphDataset) :
+        x, edge_index, edge_attr, masks = data.get(i)
+        
+        params = None
+    else :
+        raise ValueError("The data type is not supported")
 
     xshape = x.shape
 
     edge_index = edge_index.to(device)
     edge_attr = edge_attr.to(device)
-    params = params.to(device)
     
     if duration > xshape[0] - 2 or duration < 1 :
         duration = xshape[0] - 2
@@ -192,26 +237,27 @@ def run_single_recursive(model : Gatv2Predictor, data, i : int, device : torch.d
     for current_time in range(start_time + 1, start_time + 1 + duration) :
         input_x_before = input_x.clone().to(device)
         input_x = model(input_x.to(device), edge_index.to(device), edge_attr.to(device), params)
-        input_x_clone = input_x.clone()
         
         out = torch.cat((out, input_x.clone()), dim=0)
         out_before = torch.cat((out_before, input_x_before.clone()), dim=0)
         
-        input_x_clone[:,:,:model.out_channels // 2] = input_x[:,:,:model.out_channels // 2] + input_x_before[:, :, :model.out_channels // 2].to(device)
+        input_x_before[:,:,:model.out_channels // 2] = input_x[:, :, :model.out_channels // 2] + input_x_before[:, :, :model.out_channels // 2]
 
-        input_x, edge_index, edge_attr = data.get_edges(input_x_clone[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1])
-        input_x[:,:,:model.out_channels // 2] = input_x_clone[:,:,:model.out_channels // 2]
+        _, edge_index, edge_attr = data.get_edges(input_x_before[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, T=1, N=xshape[1], masks=masks)
+        
+        #if we don't predict the speeds we need to compute the difference manually
+        if model.out_channels == 4 :
+            input_x_before[:,:,2:4] = input_x[:,:,:2]
+                    
+        input_x = input_x_before
         
 
     if isinstance(model, GraphEvolutionDiscr) :
         raise Exception("Relative loss not implemented for GraphEvolutionDiscr")
     else :
-        loss, out = model.loss_relative_direct(out[:,:,:model.out_channels], out_before[:,:,:model.out_channels//2], x[start_time + 2 - 1:start_time + duration + 2,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr)
+        loss, out = model.loss_relative_direct(out[:,:,:model.out_channels], out_before[:,:,:model.out_channels//2], x[start_time + 2 - 1:start_time + duration + 2,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
             
     if output :
-        if data.wrap :
-            x, out = denorm(x, out, duration, border, device)
-        
         return loss, out, x
     else :
         return loss, None, None    

@@ -81,23 +81,18 @@ class Gatv2Predictor(torch.nn.Module):
         y = self.decoder_resize(y).reshape(xshape[0], xshape[1], self.out_channels)
         
         return y
-    
-    def forward_postprocess(self, x, y, xshape) :
-        means = y[:,:,:self.out_channels//2]
-
-        log_std = y[:,:,self.out_channels//2:]
         
-        out = torch.cat((means, log_std), dim=2)
-        return out
-        
-    def forward(self, x, edge_index, edge_attr, params, only_mean=False):
+    def forward(self, x, edge_index, edge_attr, params=None, only_mean=False):
         if len(x.shape) == 2 :
             x = x.reshape(1, x.shape[0], x.shape[1])
+            
         #add to x the params 
         xshape = x.shape
-        x = torch.cat((x, params.reshape(1, 1, params.shape[0]).repeat(xshape[0], xshape[1], 1)), dim=2)
         
-        xshape = x.shape
+        if params is not None :
+            x = torch.cat((x, params.reshape(1, 1, params.shape[0]).repeat(xshape[0], xshape[1], 1)), dim=2)
+
+            xshape = x.shape
 
         #encode
         y, encoder_extended = self.forward_encode(x)
@@ -108,13 +103,10 @@ class Gatv2Predictor(torch.nn.Module):
         #decode
         y = self.forward_decode(xshape, y, encoder_extended)
         
-        #post processing
-        out = self.forward_postprocess(x, y, xshape)
-        
         if only_mean :
-            out = out[:,:,:self.out_channels//2]
+            y = y[:,:,:self.out_channels//2]
         
-        return out
+        return y
     
     def forward_return_attention(self, x, edge_index, edge_attr, params):
         #add to x the params 
@@ -132,10 +124,7 @@ class Gatv2Predictor(torch.nn.Module):
         #decode
         y = self.forward_decode(xshape, y, encoder_extended)
         
-        #post processing
-        out = self.forward_postprocess(x, y, xshape)
-        
-        return out, attentions
+        return y, attentions
     
     def show_gradients(self):
         for name, param in self.named_parameters():
@@ -143,7 +132,7 @@ class Gatv2Predictor(torch.nn.Module):
                 if param.grad != None :
                     print(name, param.grad.mean())
 
-    def loss_relative_direct(self, pred, pred_before, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean'):
+    def loss_relative_direct(self, pred, pred_before, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None):
         if target.shape[0] != pred.shape[0] + 1 :
             raise Exception("target.shape[0] != pred.shape[0] + 1")
         
@@ -156,7 +145,7 @@ class Gatv2Predictor(torch.nn.Module):
     
         return self.diff(pred, std, pred[:,:,self.out_channels//2:], targ, loss_history=loss_history, distrib=distrib, add_back=pred_before, aggr=aggr)
     
-    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None, aggr = 'mean') :
+    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None, aggr = 'mean', masks=None) :
         target = target.to(pred.device)
 
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
@@ -170,6 +159,10 @@ class Gatv2Predictor(torch.nn.Module):
             if self.wrap :
                 #https://www.geogebra.org/m/fvsyepzd
                 diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
+                
+            #make 0 for the values that are in the mask
+            if masks is not None :
+                diff = diff * masks
 
             loss_mean = diff / (2 * std**2) 
             loss_log = log_std
@@ -185,13 +178,20 @@ class Gatv2Predictor(torch.nn.Module):
         else :
             raise ValueError('distrib must be normal or laplace')
         
+        if masks is not None :
+            diff = diff * masks
+            loss_log = loss_log * masks
+            loss_mean = loss_mean * masks
+            
+        #loss_log[:,:,2:] = 0
+        #loss_mean[:,:,2:] = 0
+        
         if aggr == 'mean' :
             loss = torch.mean(loss_mean + loss_log)
-        elif aggr == 'max' :
-            loss = 0.30 * torch.max(loss_mean + loss_log) + 0.70 * torch.mean(loss_mean + loss_log)
         else :
             raise ValueError('aggr must be mean or max')
         
+
         loss_history["loss_mean"].append(diff.mean().item())
         loss_history["loss_log"].append(loss_log.mean().item())
         loss_history["loss"].append(torch.mean(loss_mean + loss_log).item())
