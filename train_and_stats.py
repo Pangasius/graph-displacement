@@ -7,12 +7,21 @@ import sys
 import os
 from genericpath import exists
 
-from cell_dataset import CellGraphDataset, loadDataset, single_overfit_dataset
-from cell_model import Gatv2Predictor, Gatv2PredictorDiscr, ConvPredictor
+from cell_dataset import CellGraphDataset, loadDataset
+from cell_model import Gatv2Predictor
 from cell_utils import GraphingLoss, make_animation
-from cell_training import train, test_single, compute_parameters_draw, run_single_recursive, run_single_recursive_draw, predict
+from cell_training import train, test_single, compute_parameters_draw, predict
+
+import torch_geometric
+from torch_geometric.explain import Explainer, AttentionExplainer
+from cell_dataset import loadDataset
+
+from genericpath import exists
+
+import networkx as nx
 
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 import os, psutil
 process = psutil.Process(os.getpid())
@@ -94,11 +103,12 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     
     #Load model
     
+
     epoch_to_load = 100
     if exists(model_path + str(epoch_to_load) + ".pt") :
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-    
+
 
     #might want to investigate AdamP 
     optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
@@ -109,7 +119,6 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     grapher = GraphingLoss()
 
     model = model.to(device)
-
 
     start(model, optimizer, scheduler, data_train, data_test, device, \
             epochs, 0, grapher=grapher, save=50, save_datasets=False)
@@ -138,10 +147,13 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     f, ax = plt.subplots(1, 3, figsize=(10, 3))
     ax[0].hist(speed_y_axis0, bins=100)
     ax[0].set_title("Speed distribution in x")
+    ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
     ax[1].hist(speed_y_axis1, bins=100)
     ax[1].set_title("Speed distribution in y")
+    ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
     ax[2].hist(speed_y_total, bins=100)
     ax[2].set_title("Speed distribution")
+    ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
     f.savefig("speed_distribution " + name_complete + ".png")
 
     class Parameters(object):
@@ -381,7 +393,7 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.legend()
     fig.savefig('msd' + name_complete + '.pdf')
 
-
+    print("Done")
 
 if __name__ == "__main__" :
 

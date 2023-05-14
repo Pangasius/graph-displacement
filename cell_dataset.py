@@ -225,7 +225,7 @@ class CellGraphDataset(Dataset):
                 self.waiting_for = -2
                 break
             
-    def speed_distribution(self, bins=100, only_one=-1) :
+    def speed_distribution(self, bins=100, only_one=-1, extension="") :
         if only_one == -1 :
             speeds_x = torch.cat([self.memory.get(self.paths.fget()[i])[0][:,:,2].reshape(-1) for i in range(self.len())])
             
@@ -240,11 +240,14 @@ class CellGraphDataset(Dataset):
         f, ax = plt.subplots(1, 3, figsize=(10, 3))
         ax[0].hist(speeds_x, bins=bins)
         ax[0].set_title("Speed distribution in x")
+        ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
         ax[1].hist(speeds_y, bins=bins)
         ax[1].set_title("Speed distribution in y")
+        ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
         ax[2].hist(speeds, bins=bins)
         ax[2].set_title("Speed distribution")
-        f.savefig("speed_distribution.png")
+        ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
+        f.savefig("speed_distribution" + extension + ".png")
         
          
 
