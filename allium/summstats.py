@@ -87,7 +87,7 @@ def calculate_summary_statistics(d, opts = ['A','B','C','D','E','F','G','H'],use
         qmax = np.pi/d.sigma #particle size in wavelength (upper limit)
         all_ssvect.append(SelfInt2)
         if log: print('Finished calculating D. self-intermediate scattering fcn', file=open(log_output, 'a'))
-        if np.sum(SelfInt2 < 0.5) > 0:
+        if np.nansum(SelfInt2 < 0.5) > 0:
             ssvect.append(tval3[SelfInt2 < 0.5][0])
         else:
             ssvect.append(tval3[-1])
@@ -116,7 +116,7 @@ def calculate_summary_statistics(d, opts = ['A','B','C','D','E','F','G','H'],use
         y = velcorrReal[(50<spacebins) & (spacebins< 300)]
         
         if log: print('Finished calculating E. vel. corr. fcn', file=open(log_output, 'a'))
-        if np.sum(y>0) > 0:
+        if np.nansum(y>0) > 0:
             ssvect.append(np.polyfit(np.log(x[y>0]), np.log(y[y>0]), 1)[0])
         else:
             ssvect.append(0)
@@ -211,7 +211,7 @@ def combine(ssdata, ss_opt = ['vav', 'vdist', 'vdist2', 'msd','Nvals'], plot = F
     
     def rescale(d):
         #simple rescaling function (to btwn [0,1]) for saving all summvects
-        return (d - np.min(d))/(np.max(d) - np.min(d))
+        return (d - np.nanmin(d))/(np.nanmax(d) - np.nanmin(d))
 
     def prep_vav(ss, bounds = [0,1], nstd = 2):
         
@@ -320,7 +320,7 @@ def fit_div_rate(data,verbose=True):
 def deltax(data,usetype=[1]):
     tracers_start = data.gettypes(usetype,0)
     tracers_end = data.gettypes(usetype,len(data.rval)-1)
-    return np.mean(data.rval[-1][tracers_end,0] - data.rval[0][tracers_start,0])
+    return np.nanmean(data.rval[-1][tracers_end,0] - data.rval[0][tracers_start,0])
     
 def deltaphi(data):
     return (data.Nvals[-1] - data.Nvals[0])*(np.pi*data.param.R*data.param.R)/(data.param.Lx*data.param.Ly)        
@@ -350,7 +350,7 @@ def getVelDist(data,bins,bins2,usetype=[1,2],verbose=True):
         vx = data.vval[u,tracers,0]
         vy = data.vval[u,tracers,1]
         # mean velocity magnitude
-        vav[u]=np.mean(vmagnitude)
+        vav[u]=np.nanmean(vmagnitude)
         # normalised magnitude histogram
         vdist0,dummy=np.histogram(vmagnitude/vav[u],bins,density=True)
         vdist+=vdist0
@@ -413,7 +413,7 @@ def getMSD(data, usetype=[1],verbose=True, periodic=True):
             for n in range(smax):
                 dr[n] = ApplyPeriodic2d(data, dr[n])
 
-        msd[t]=np.sum(np.sum(np.sum(dr**2,axis=2),axis=1),axis=0)/(data.Ntracers*smax)
+        msd[t]=np.nansum(np.nansum(np.nansum(dr**2,axis=2),axis=1),axis=0)/(data.Ntracers*smax)
 
     data.hasMSD = True
     data.msd = msd
@@ -448,7 +448,7 @@ def getVelAuto(data,usetype=[1],verbose=True):
 
     for t in range(data.Nsnap-1):
         tmax=(data.Nsnap-1)-t
-        velauto[t]=np.sum(np.sum((data.vval[t:,isdata,0]*data.vval[:tmax,isdata,0]+\
+        velauto[t]=np.nansum(np.nansum((data.vval[t:,isdata,0]*data.vval[:tmax,isdata,0]+\
                                   data.vval[t:,isdata,1]*data.vval[:tmax,isdata,1]),axis=1),axis=0)/(data.Ntracers*tmax)
     #normalising back to velauto = 1 due to different averaging (types 1 & 2 rather than 1) - out by approx 4%                        
     xval=np.linspace(0,round((data.Nsnap-1)*data.param.dt*data.param.output_time),num=(data.Nsnap-1))
@@ -554,11 +554,11 @@ def SelfIntermediate(data,qval,usetype=[1],verbose=True, periodic=True):
             dr[n] = ApplyPeriodic2d(data, dr[n])
 
         if periodic:
-            SelfInt[t]=np.sum(np.sum(np.exp(1.0j*qval[0]*dr[:,:,0]+ \
+            SelfInt[t]=np.nansum(np.nansum(np.exp(1.0j*qval[0]*dr[:,:,0]+ \
                                             1.0j*qval[1]*dr[:,:,1] \
                                         ),axis=1),axis=0)/(data.Ntracers*smax)         
         else:   
-            SelfInt[t]=np.sum(np.sum(np.exp(1.0j*qval[0]*(rt[:,:,0]-rtplus[:,:,0]) + \
+            SelfInt[t]=np.nansum(np.nansum(np.exp(1.0j*qval[0]*(rt[:,:,0]-rtplus[:,:,0]) + \
                                             1.0j*qval[1]*(rt[:,:,1]-rtplus[:,:,1])\
                                         ),axis=1),axis=0)/(data.Ntracers*smax)                    
 
@@ -633,14 +633,14 @@ def FourierTrans(data,qmax=0.3,whichframe=1,usetype=[0,1,2],verbose=True, debug=
     for kx in range(nq):
         for ky in range(nq):
             # And, alas, no FFT since we are most definitely off grid. And averaging is going to kill everything.
-            fourierval[kx,ky]=np.sum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1])))/N
+            fourierval[kx,ky]=np.nansum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1])))/N
     plotval=N*(np.real(fourierval)**2+np.imag(fourierval)**2)
     
     # Produce a radial averaging to see if anything interesting happens
     nq2=int(2**0.5*nq)
     valrad=np.zeros((nq2,))
     for l in range(nq2):
-        valrad[l]=np.mean(plotval[ptsx[l],ptsy[l]])#, axis=0)
+        valrad[l]=np.nanmean(plotval[ptsx[l],ptsy[l]])#, axis=0)
     
     if verbose:
         plt.figure()
@@ -673,8 +673,8 @@ def FourierTransVel(data,qmax=0.3,whichframe=1,usetype=[0,1],verbose=True, L = 8
 
     for kx in range(nq):
         for ky in range(nq):
-            fourierval[kx,ky,0]=np.sum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1]))*data.vval[whichframe,useparts,0])/N
-            fourierval[kx,ky,1]=np.sum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1]))*data.vval[whichframe,useparts,1])/N 
+            fourierval[kx,ky,0]=np.nansum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1]))*data.vval[whichframe,useparts,0])/N
+            fourierval[kx,ky,1]=np.nansum(np.exp(1j*(qx[kx]*data.rval[whichframe,useparts,0]+qy[ky]*data.rval[whichframe,useparts,1]))*data.vval[whichframe,useparts,1])/N 
     
     # Sq = \vec{v_q}.\vec{v_-q}, assuming real and symmetric
     # = \vec{v_q}.\vec{v_q*} = v
@@ -684,7 +684,7 @@ def FourierTransVel(data,qmax=0.3,whichframe=1,usetype=[0,1],verbose=True, L = 8
     nq2=int(2**0.5*nq)
     Sqrad=np.zeros((nq2,))
     for l in range(nq2):
-        Sqrad[l]=np.mean(Sq[ptsx[l],ptsy[l]])
+        Sqrad[l]=np.nanmean(Sq[ptsx[l],ptsy[l]])
     
     plotval_x=np.sqrt(np.real(fourierval[:,:,0])**2+np.imag(fourierval[:,:,0])**2)
     plotval_y=np.sqrt(np.real(fourierval[:,:,1])**2+np.imag(fourierval[:,:,1])**2)
@@ -692,8 +692,8 @@ def FourierTransVel(data,qmax=0.3,whichframe=1,usetype=[0,1],verbose=True, L = 8
     # Produce a radial averaging to see if anything interesting happens
     valrad=np.zeros((nq2,2))
     for l in range(nq2):
-        valrad[l,0]=np.mean(plotval_x[ptsx[l],ptsy[l]])
-        valrad[l,1]=np.mean(plotval_y[ptsx[l],ptsy[l]])
+        valrad[l,0]=np.nanmean(plotval_x[ptsx[l],ptsy[l]])
+        valrad[l,1]=np.nanmean(plotval_y[ptsx[l],ptsy[l]])
 
     if verbose:
         plt.figure()
@@ -717,7 +717,7 @@ def getVelcorrSingle(data,dx,xmax,whichframe=1,usetype='all',verbose=True):
     #index relevant particles (by default we use all of them)
     useparts = data.gettypes(usetype,whichframe)
     N = sum(useparts)
-    velav=np.mean(data.vval[whichframe,useparts,:],axis=0)
+    velav=np.nanmean(data.vval[whichframe,useparts,:],axis=0)
 
     for k in range(N):
         

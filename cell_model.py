@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch
 
 class Gatv2Predictor(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, hidden_channels, dropout=0.0, edge_dim=1, messages=3, wrap=True, absolute=0, heads=8):
+    def __init__(self, in_channels, out_channels, hidden_channels, dropout=0.1, edge_dim=1, messages=3, wrap=True, absolute=0, heads=8, horizon=1):
         super().__init__()
         
         self.edge_dim = edge_dim
@@ -20,71 +20,68 @@ class Gatv2Predictor(torch.nn.Module):
         
         self.dropout = dropout
         
-        assert(messages > 0)
+        self.horizon = horizon
         
         #expand input so encoder is the size of the hidden channels
         self.encoder_resize = torch.nn.Linear(self.in_channels, self.hidden_channels)
         
+        #needed because norm first is set to true in the transformer encoder
+        self.norm_encoder = torch.nn.LayerNorm(self.hidden_channels)
+        
         #we need an encoder to encode the messages before sending them
-        encode_layer = torch.nn.TransformerEncoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels)
-        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=6)
-        
-        self.gat_resize = torch.nn.Linear(self.hidden_channels, self.hidden_channels * self.message_passers_heads)
-        
+        encode_layer = torch.nn.TransformerEncoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=False, dim_feedforward=self.hidden_channels, activation=torch.nn.functional.leaky_relu, norm_first=True)
+        self.transformer_encoder = torch.nn.TransformerEncoder(encode_layer, num_layers=6, enable_nested_tensor=True)
+    
         self.message_passers_constr()
         
+        #needed because norm first is set to true in the transformer encoder
+        self.norm_decoder = torch.nn.LayerNorm(self.hidden_channels)
+        
         #we take the output and convert it to the desired output
-        decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.message_passers_heads * self.hidden_channels, nhead=4, dropout=dropout, batch_first=True, dim_feedforward=self.hidden_channels * self.message_passers_heads)
+        decode_layer = torch.nn.TransformerDecoderLayer(d_model=self.hidden_channels, nhead=4, dropout=dropout, batch_first=False, dim_feedforward=self.hidden_channels, activation=torch.nn.functional.leaky_relu, norm_first=True)
         self.transformer_decoder = torch.nn.TransformerDecoder(decode_layer, num_layers=6)
         
-        self.decoder_resize = torch.nn.Linear(self.hidden_channels * self.message_passers_heads, self.out_channels)
+        self.decoder_resize = torch.nn.Linear(self.hidden_channels, self.out_channels)
         
     def message_passers_constr(self) :
         self.message_passers = torch.nn.ModuleList()
         for i in range(self.messages):
-            self.message_passers.append(GATv2Conv(self.hidden_channels * self.message_passers_heads, self.hidden_channels, heads=self.message_passers_heads, dropout=self.dropout, concat=True, edge_dim=self.edge_dim))
+            self.message_passers.append(GATv2Conv(self.hidden_channels, self.hidden_channels, heads=self.message_passers_heads, dropout=self.dropout, concat=False, edge_dim=self.edge_dim, add_self_loops=False, fill_value=0.0))
         
     def forward_encode(self, x) :
         #encode
-        x_extended = self.encoder_resize(x.reshape(-1, self.in_channels)).reshape(-1, 1, self.hidden_channels)
-        encoded = F.gelu(x_extended)
-        encoded = self.transformer_encoder(encoded) + x_extended
+        x = self.encoder_resize(x.view(-1, self.in_channels)).view(self.horizon, -1, self.hidden_channels)
         
-        y = self.gat_resize(encoded).reshape(-1, self.hidden_channels * self.message_passers_heads)
+        x = self.transformer_encoder(x, is_causal=True)
         
-        encoder_extended = y.clone().reshape(-1, 1, self.hidden_channels * self.message_passers_heads)
+        x = x.mean(dim=0, keepdim=True)
         
-        return y, encoder_extended
+        x = self.norm_encoder(x)
+        
+        return x
     
     def forward_message(self, y, edge_index, edge_attr) :
+        y = y.view(-1, self.hidden_channels)
         for i in range(self.messages):
-            y = self.message_passers[i](y, edge_index, edge_attr)
-            y = F.gelu(y)
+            y = y + F.leaky_relu(self.message_passers[i](y, edge_index, edge_attr))
         
         return y
     
-    def forward_message_and_return_attention(self, y, edge_index, edge_attr) :
-        attentions = []
-        for i in range(self.messages):
-            y, att = self.message_passers[i](y, edge_index, edge_attr, return_attention_weights=True)
-            attentions.append(att)
-            y = F.gelu(y)
-        
-        return y, attentions
-    
     def forward_decode(self, xshape, y, encoder_extended) :
-        y = y.reshape(xshape[0]*xshape[1], 1, self.message_passers_heads* self.hidden_channels)
-
+        y = y.view(1, xshape[1], self.hidden_channels)
+        
         # different nodes will be considered as batches
-        y = self.transformer_decoder(y, encoder_extended).reshape(xshape[0]*xshape[1], self.message_passers_heads* self.hidden_channels)
+        y = self.transformer_decoder(y, encoder_extended).view(xshape[1], self.hidden_channels)
+        
+        y = self.norm_decoder(y)
 
-        y = self.decoder_resize(y).reshape(xshape[0], xshape[1], self.out_channels)
+        y = self.decoder_resize(y).view(1, xshape[1], self.out_channels)
         
         return y
         
     def forward(self, x, edge_index, edge_attr, params=None, only_mean=False):
         if len(x.shape) == 2 :
-            x = x.reshape(1, x.shape[0], x.shape[1])
+            x = x.unsqueeze(0)
             
         #add to x the params 
         xshape = x.shape
@@ -95,44 +92,26 @@ class Gatv2Predictor(torch.nn.Module):
             xshape = x.shape
 
         #encode
-        y, encoder_extended = self.forward_encode(x)
+        encoded = self.forward_encode(x)
 
         #message passing
-        y = self.forward_message(y, edge_index, edge_attr)
+        y = self.forward_message(encoded, edge_index, edge_attr)
             
         #decode
-        y = self.forward_decode(xshape, y, encoder_extended)
+        y = self.forward_decode(xshape, y, encoded)
         
         if only_mean :
             y = y[:,:,:self.out_channels//2]
         
         return y
-    
-    def forward_return_attention(self, x, edge_index, edge_attr, params):
-        #add to x the params 
-        xshape = x.shape
-        x = torch.cat((x, params.reshape(1, 1, params.shape[0]).repeat(xshape[0], xshape[1], 1)), dim=2)
-        
-        xshape = x.shape
 
-        #encode
-        y, encoder_extended = self.forward_encode(x)
-
-        #message passing
-        y, attentions = self.forward_message_and_return_attention(y, edge_index, edge_attr)
-            
-        #decode
-        y = self.forward_decode(xshape, y, encoder_extended)
-        
-        return y, attentions
-    
     def show_gradients(self):
         for name, param in self.named_parameters():
             if param.requires_grad:
                 if param.grad != None :
                     print(name, param.grad.mean())
 
-    def loss_relative_direct(self, pred, pred_before, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None):
+    def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None):
         if target.shape[0] != pred.shape[0] + 1 :
             raise Exception("target.shape[0] != pred.shape[0] + 1")
         
@@ -141,68 +120,55 @@ class Gatv2Predictor(torch.nn.Module):
         
         targ = now - previous
         
-        std = torch.exp(pred[:,:,self.out_channels//2:])
+        log_std = pred[:,:,self.out_channels//2:]
+        mu = pred[:,:,:self.out_channels//2]
+        
+        std = torch.exp(log_std)
     
-        return self.diff(pred, std, pred[:,:,self.out_channels//2:], targ, loss_history=loss_history, distrib=distrib, add_back=pred_before, aggr=aggr)
+        return self.diff(mu, std, log_std, targ, loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
     
-    def diff(self, pred, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, add_back = None, aggr = 'mean', masks=None) :
-        target = target.to(pred.device)
+    def diff(self, mu, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, aggr = 'mean', masks=None) :
+        target = target.to(mu.device)
 
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
         #slide 16
-        
-        std = std + 1e-6
-            
+           
         if distrib == 'normal' :
-            diff = (pred[:,:,:self.out_channels//2] - target)**2
+            diff = (mu - target)**2
 
             if self.wrap :
                 #https://www.geogebra.org/m/fvsyepzd
                 diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
-                
-            #make 0 for the values that are in the mask
-            if masks is not None :
-                diff = diff * masks
 
             loss_mean = diff / (2 * std**2) 
             loss_log = log_std
         elif distrib == 'laplace' :
-            diff = torch.abs((pred[:,:,:self.out_channels//2] - target))
+            diff = torch.abs((mu - target))
 
             if self.wrap :
                 #https://www.geogebra.org/m/fvsyepzd
-                diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
+                diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20 
             
             loss_mean = diff / (std)
             loss_log = log_std
         else :
             raise ValueError('distrib must be normal or laplace')
-        
+
         if masks is not None :
-            diff = diff * masks
-            loss_log = loss_log * masks
-            loss_mean = loss_mean * masks
-            
-        #loss_log[:,:,2:] = 0
-        #loss_mean[:,:,2:] = 0
+            diff = diff * masks[1:]
+            loss_log = loss_log * masks[1:]
+            loss_mean = loss_mean * masks[1:]
         
         if aggr == 'mean' :
             loss = torch.mean(loss_mean + loss_log)
         else :
             raise ValueError('aggr must be mean or max')
         
-
         loss_history["loss_mean"].append(diff.mean().item())
         loss_history["loss_log"].append(loss_log.mean().item())
         loss_history["loss"].append(torch.mean(loss_mean + loss_log).item())
-        
-        if add_back != None :
-            pred[:,:,:self.out_channels//2] = pred[:,:,:self.out_channels//2] + add_back
-
-        if self.wrap :
-            return loss.requires_grad_(), pred[:,:,:self.out_channels//2] % 1
     
-        return loss.requires_grad_(), pred[:,:,:self.out_channels//2]
+        return loss.requires_grad_()
         
         
     def in_depth_parameters(self, x) :

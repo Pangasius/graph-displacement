@@ -1,5 +1,6 @@
 import os.path as osp
 import glob
+import sys
 import btrack
 import numpy as np
 
@@ -16,8 +17,6 @@ import os
 import matplotlib.pyplot as plt
 
 import threading
-
-from skimage.io import imread
 
 #find /scratch/users/nstillman/data-cpp/train/ -name "*fast4p.p" -type f  | head | xargs du
 """
@@ -132,16 +131,10 @@ class CellGraphDataset(Dataset):
         else :
             T = rval.shape[0]
         N = rval.shape[1]
-        
-        try :
-            assert(T > 1)
-            assert(N > 1)
-        except :
-            raise Exception("Data unfit for use")
             
         rval = rval[:T,:N,:2]
         
-        rval, edge_index, edge_attr = self.get_edges(rval[:,:,2], self.max_degree, wrap=self.wrap, T=T, N=N)
+        rval, edge_index, edge_attr = self.get_edges(rval[:,:,:2], self.max_degree, wrap=self.wrap, masks=None)
 
         #additional parameters : tau, epsilon, v0, r, dt, framerate
         params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time, k]).to(torch.float)
@@ -152,13 +145,22 @@ class CellGraphDataset(Dataset):
         return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), border, params
     
     @staticmethod
-    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, T : int, N : int, masks : torch.Tensor | None) :
+    def get_edges(rval : torch.Tensor, max_degree : int, wrap : bool, masks : torch.Tensor | None, previous = None) :
+        
+        if len(rval.shape) == 2 :
+            rval = rval.unsqueeze(0)
+            
+        if previous is not None and len(previous.shape) == 2 :
+            previous = previous.unsqueeze(0)
+        
+        T = rval.shape[0]
+        N = rval.shape[1]
 
         if not wrap :
             batch = torch.arange(T).repeat_interleave(N).to(torch.long)
             
             if masks is not None :
-                rval_masked = torch.where(masks.to(torch.bool), torch.tensor([np.nan, np.nan]), rval)
+                rval_masked = torch.where(masks.cpu().to(torch.bool), torch.tensor([np.nan, np.nan]), rval)
             else :
                 rval_masked = rval
         
@@ -205,11 +207,23 @@ class CellGraphDataset(Dataset):
         #we will add to rval the difference of positions from a time step to the next
         rval = rval.reshape(T, N, -1)
         rval = torch.cat((rval, torch.zeros_like(rval)), dim=2)
-        rval[1:,:,2:] = rval[1:,:,:2] - rval[:-1,:,:2]
+        if T == 1 and previous is not None:
+            rval[0,:,2:] = rval[0,:, :2] - previous
+        elif T > 1  and previous is None:
+            rval[1:,:,2:] = rval[1:,:,:2] - rval[:-1,:,:2]
+        else :
+            raise Exception("Either T must be greater than 1 or previous must be provided")
         
         if wrap :
             #substract 1 to the speeds if they are greater than 0.5
             rval[:,:,2:] = rval[:,:,2:] - (rval[:,:,2:] > 0.5).float() + (rval[:,:,2:] < -0.5).float()
+            
+        #add the degree of each node to the node
+        degree = torch.zeros((T, N, 1))
+        for i in range(T) :
+            for j in range(N) :
+                degree[i, j, 0] = torch.sum(edge_index[1, :] == i*N+j)
+        rval = torch.cat((rval, degree), dim=2)
         
         return rval, edge_index, edge_attr
     
@@ -249,9 +263,7 @@ class CellGraphDataset(Dataset):
         ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
         f.savefig("speed_distribution" + extension + ".png")
         
-         
-
-    def get(self, idx):
+    def get(self, idx, duration=1):
         if self.bg_load and not self.bg_load_running :
             self.bg_load_running = True
             self.thread = threading.Thread(target=self.load_all)
@@ -261,8 +273,34 @@ class CellGraphDataset(Dataset):
             if self.waiting_for <= idx :
                 self.thread.join()
                 self.thread=None
+                
+        processed = self.process_file(self.paths.fget()[idx])
             
-        return self.process_file(self.paths.fget()[idx])
+        return self.find_appropriate_time(processed, duration=duration)
+    
+    def find_appropriate_time(self, out, duration=-1) :
+        x, edge_index, edge_attr, border, params = out
+        
+        xshape = x.shape
+        
+        if duration > xshape[0] - 2 or duration < 1 :
+            duration = xshape[0] - 2
+            start_time = 1
+        else : 
+            start_time = int(torch.randint(1, xshape[0] - 2 - duration, (1,)).item())
+            
+        duration = duration + 1
+
+        #we don't want to predict the last step since we wouldn't have the data for the loss
+        #and for the first point we don't have the velocity
+        x = x[start_time:start_time + duration, :, :]
+
+        mask = torch.div(edge_index[0, :], xshape[1], rounding_mode='floor') == start_time
+
+        edge_index = edge_index[:, mask] - xshape[1] * (start_time)
+        edge_attr = edge_attr[mask]
+        
+        return duration, x, edge_index, edge_attr, border, params
         
     def _dump_source(self, path):
         with open(path, 'wb') as f:
@@ -317,17 +355,35 @@ class RealCellGraphDataset(CellGraphDataset):
                 continue
             
             t = np.array(cell['t'], dtype=np.float32).reshape(-1,1)
+            
+            if t.shape[0] < 4 :
+                continue
+            
             x = np.array(cell['x'], dtype=np.float32).reshape(-1,1)
             y = np.array(cell['y'], dtype=np.float32).reshape(-1,1)
+
             ori =  np.array(cell['orientation'], dtype=np.float32).reshape(-1,1)
             major = np.array(cell['major_axis_length'], dtype=np.float32).reshape(-1,1)
             minor = np.array(cell['minor_axis_length'], dtype=np.float32).reshape(-1,1)
             area = np.array(cell['area'], dtype=np.float32).reshape(-1,1)
+
+            t = t[1:]
+            x = x[1:]
+            y = y[1:]
+            
+            ori = ori[1:]
+            
+            area = area[1:]
+            major = major[1:] 
+            minor = minor[1:] 
             
             individual_cell = np.concatenate((t,x,y,ori,major,minor,area), axis=1)
 
             cells.append(individual_cell)
             
+
+        print("Found", len(cells), "cells")
+
         for cell in cells :
             #interpolate missing frames
             for t in range(cell.shape[0]) :
@@ -348,52 +404,66 @@ class RealCellGraphDataset(CellGraphDataset):
             else :
                 cells_no_gap.append(cell)
                 if cell[-1,0] > end :
-                    end = cell[-1,0]
-
-        cells_aligned = []
-        masks = []
-        #make a sparse matrix with all the cells
-        for cell in cells_no_gap :
-            mask = np.ones((int(end + 1), 1))
-            cell_aligned = np.zeros((int(end + 1), 6))
-            for t in range(cell.shape[0]) :
-                cell_aligned[int(cell[t,0]),:] = cell[t,1:]
-                mask[int(cell[t,0]),:] = 0
+                    end = cell[-1,0] + 1
+                    
+        print("Found", len(cells_no_gap), "cells without gaps")
                 
-            cells_aligned.append(cell_aligned)
-            masks.append(mask)
-            
-        cells_aligned = np.array(cells_aligned)
-        masks = np.array(masks)
+        #create a complete matrix with all the cells
+        cells_final = torch.zeros((int(end), len(cells_no_gap), 6))
+        masks = torch.zeros((int(end), len(cells_no_gap), 1))
+        for i in range(len(cells_no_gap)) :
+            cell = cells_no_gap[i]
+            for j in range(cell.shape[0]) :
+                cells_final[int(cell[j,0]), i, :] = torch.tensor(cell[j,1:])
+                masks[int(cell[j,0]), i, :] = 1
+                
+        #the speeds won't be correctly defined at the first edge of the mask
+        #so we set the mask to 0 for the first edge
+        for i in range(cells_final.shape[0]) :
+            for j in range(cells_final.shape[1]) :
+                if masks[i,j,0] == 1 :
+                    if i == 0 :
+                        masks[i,j,0] = 0
+                        #we can break because we know there is no break in the mask
+                        break 
+                    elif masks[i-1,j,0] == 0 :
+                        masks[i,j,0] = 0
+                        break
+                    
+        print("Found ", int(masks.sum()), " valid values")
+        
+        print("Filling rate : ", int(masks.sum()) / (cells_final.shape[0] * cells_final.shape[1]))
 
-        #exchange the first and second axis
-        cells_aligned = np.swapaxes(cells_aligned, 0, 1)
-        masks = np.swapaxes(masks, 0, 1)
-        
-        cells_aligned = torch.tensor(cells_aligned)
-        masks = torch.tensor(masks)
-        
-        return cells_aligned, masks
+        return cells_final, masks.to(torch.float)
     
     def process_file(self, path : str):
         if self.memory.get(path) is not None :
             return self.memory[path]
         
         rval, masks = self.find_data_and_masks(path)
+
+        position_scale = rval[:,:,:2].mean()
+        rval[:,:,:2] /= position_scale
         
-        T = rval.shape[0]
-        N = rval.shape[1]
+        dim_scale = rval[:,:,3:5].mean()
+        rval[:,:,3:5] /= dim_scale
+        rval[:,:,5] /= dim_scale**2
         
         rval_position = rval[:,:,:2]
         
-        rval_position, edge_index, edge_attr = self.get_edges(rval_position, self.max_degree, wrap=self.wrap, T=T, N=N, masks=masks)
+        rval_position, edge_index, edge_attr = self.get_edges(rval_position, self.max_degree, wrap=self.wrap, masks=masks)
         
+        #we concat x,y,dx,dy,degree with ori,major,minor,area
         rval = torch.cat((rval_position, rval[:,:,2:]), dim=2)
+        
+        #swap the fifth column with the rest such that the degree is the last column
+        #we have thus x,y,dx,dy,ori,major,minor,area,degree
+        rval = torch.cat((rval[:,:,:5], rval[:,:,6:], rval[:,:,5:6]), dim=2)
 
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks)
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks, position_scale, dim_scale)
 
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks, position_scale, dim_scale
                 
     class each_path():
         def __init__(self, root : str | list[str], max_size : int):
@@ -420,6 +490,46 @@ class RealCellGraphDataset(CellGraphDataset):
         
         def fget(self):
             return self._each_path
+        
+    def find_appropriate_time(self, out, duration=-1):
+            
+        #we will find a time length of at least duration in which there are no cells that appear or disappear
+        rval, edge_index, edge_attr, masks, position_scale, dim_scale  = out
+        
+        xshape = rval.shape
+        
+        if duration > xshape[0] - 2 or duration < 1 :
+            duration = xshape[0] - 2
+
+        #we will make random perms of the time
+        start_times = torch.randperm(xshape[0] - duration - 1) + 1
+        mask = None
+        start_time = 1
+        for s in start_times :
+            #we will remove every cell that is not present at start_time
+            mask = masks[s, :, 0] == 1
+            
+            # we want at least 5 cells
+            if mask.shape[0] > 5 :
+                start_time = s
+                break
+              
+        rval = rval[start_time:start_time+duration, mask, :]
+        masks = masks[start_time:start_time+duration, mask, :]
+        
+        rval = (rval * masks).to(torch.float)
+        
+        xshape = rval.shape
+        
+        #we will reconstruct the edge_index and edge_attr
+        rval_position, edge_index, edge_attr = self.get_edges(rval[0,:,:2], self.max_degree, wrap=self.wrap, masks=None, previous=rval[0,:,:2]) #we don't care about previous
+        
+        #reassign the degree
+        rval[0,:,-1] = rval_position[0,:,-1]
+        
+        #we will return the sequence of duration length starting at start
+        return duration, rval, edge_index, edge_attr, masks
+        
     
 
 def loadDataset(load_all = True, suffix = "", pre_separated = False, override = False) -> tuple[CellGraphDataset, CellGraphDataset, CellGraphDataset]:
@@ -464,7 +574,16 @@ def loadDataset(load_all = True, suffix = "", pre_separated = False, override = 
             data_val = CellGraphDataset(root=path + 'valid', max_size=50, inmemory=True, bg_load=True, wrap=True, T_limit=8)
             print("Validation data length : ", data_val.len())
         else :
-            path = "/scratch/users/nstillman/open/high_tau_high_v0/"
+            if suffix.__contains__("ht_hv") :
+                path = "/scratch/users/nstillman/open/high_tau_high_v0/"
+            elif suffix.__contains__("ht_lv") :
+                path = "/scratch/users/nstillman/open/high_tau_low_v0/"
+            elif suffix.__contains__("lt_hv") :
+                path = "/scratch/users/nstillman/open/low_tau_high_v0/"
+            elif suffix.__contains__("lt_lv") :
+                path = "/scratch/users/nstillman/open/low_tau_low_v0/"
+            else :
+                raise Exception("suffix must contain ht_hv, ht_lv, lt_hv or lt_lv")
             
             data_train, data_test, data_val =  extract_train_test_val(path, max_size=1000, inmemory=True, bg_load=True, wrap=False, T_limit=0)
 
@@ -520,21 +639,21 @@ def extract_train_test_val(root, max_size, inmemory=False, bg_load=False, wrap=F
     
     return train_dataset, test_dataset, val_dataset
 
-def extract_real_train_test_val(root, inmemory=False, bg_load=False, wrap=False, T_limit=0) :
+def cross_val_real(root, leave_out) :
     #get all the files
     relative = [s.replace('\\', '/') for s in glob.glob(str(root) + '/*.h5')]
-    max_size = min(4, len(relative))
-    relative = relative[:max_size]
     absolute = [osp.abspath(s) for s in relative]
     absolute.sort(key=hash)
+    
+    print("Found paths: ", absolute)
+    print("Leaving out: ", absolute[leave_out])
+    print("Length: ", len(absolute))
 
-    train = absolute[:2]
-    test = absolute[2:3]
-    val = absolute[3:4]
+    test = [absolute[leave_out]]
+    train = absolute[:leave_out] + absolute[leave_out+1:]
     
     #create the datasets
-    train_dataset = RealCellGraphDataset(train, len(train), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    test_dataset = RealCellGraphDataset(test, len(test), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    val_dataset = RealCellGraphDataset(val, len(val), inmemory=inmemory, bg_load=bg_load, wrap=wrap, T_limit=T_limit)
-    
-    return train_dataset, test_dataset, val_dataset
+    train_dataset = RealCellGraphDataset(train, len(train), inmemory=True, bg_load=False, wrap=False, T_limit=0)
+    test_dataset = RealCellGraphDataset(test, len(test), inmemory=True, bg_load=False, wrap=False, T_limit=0)
+
+    return train_dataset, test_dataset

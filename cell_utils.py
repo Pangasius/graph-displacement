@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 
 import torch
 import numpy as np
@@ -11,24 +12,27 @@ class GraphingLoss():
         fig = plt.figure()
         ax = fig.add_subplot(111)
         
-        l_means = np.log(data["loss_mean"]).reshape(-1, length)
-        l_means_mean = np.mean(l_means, axis=1)
-        l_means_std = np.std(l_means, axis=1)
+        if "loss_mean" in data :
+            l_means = np.log(data["loss_mean"]).reshape(-1, length)
+            l_means_mean = np.mean(l_means, axis=1)
+            l_means_std = np.std(l_means, axis=1)
+            
+            #plot the means and the std as shaded areas
+            ax.plot(l_means_mean, label="log(loss mean)", color="red")
+            ax.fill_between(np.arange(len(l_means_mean)), l_means_mean - l_means_std, l_means_mean + l_means_std, alpha=0.2, color="red")
         
-        l_logs = np.array(data["loss_log"]).reshape(-1, length)
-        l_logs_mean = np.mean(l_logs, axis=1)
-        l_logs_std = np.std(l_logs, axis=1)
+        if "loss_log" in data :
+            l_logs = np.array(data["loss_log"]).reshape(-1, length)
+            l_logs_mean = np.mean(l_logs, axis=1)
+            l_logs_std = np.std(l_logs, axis=1)
+            
+            ax.plot(l_logs_mean, label="loss log", color="green")
+            ax.fill_between(np.arange(len(l_logs_mean)), l_logs_mean - l_logs_std, l_logs_mean + l_logs_std, alpha=0.2, color="green")
         
+    
         l = np.array(data["loss"]).reshape(-1, length)
         l_mean = np.mean(l, axis=1)
         l_std = np.std(l, axis=1)
-        
-        #plot the means and the std as shaded areas
-        ax.plot(l_means_mean, label="log(loss mean)", color="red")
-        ax.fill_between(np.arange(len(l_means_mean)), l_means_mean - l_means_std, l_means_mean + l_means_std, alpha=0.2, color="red")
-         
-        ax.plot(l_logs_mean, label="loss log", color="green")
-        ax.fill_between(np.arange(len(l_logs_mean)), l_logs_mean - l_logs_std, l_logs_mean + l_logs_std, alpha=0.2, color="green")
         
         ax.plot(l_mean, label="loss", color="blue")
         ax.fill_between(np.arange(len(l_mean)), l_mean - l_std, l_mean + l_std, alpha=0.2, color="blue")
@@ -105,10 +109,10 @@ def make_animation(saved_result, animation_name, show_speed = True) :
     ax_true = ax[0]
     ax_pred = ax[1]
 
-    left = x[:,:,0].min()
-    right = x[:,:,0].max()
-    down = x[:,:,1].min()
-    up = x[:,:,1].max()
+    left = np.nanmin(x[:,:,0])
+    right = np.nanmax(x[:,:,0])
+    down = np.nanmin(x[:,:,1])
+    up = np.nanmax(x[:,:,1])
 
     def AnimationFunction(i):
         ax_true.clear()
@@ -140,7 +144,7 @@ def make_animation(saved_result, animation_name, show_speed = True) :
 
             ax.legend(loc="upper left")
 
-    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=35)
+    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=70)
 
     #we can show the animation with the following
     #video = anim_created.to_html5_video()
@@ -153,40 +157,62 @@ def make_animation(saved_result, animation_name, show_speed = True) :
     # good practice to close the plt object.
     plt.close()
     
-
-def singleCellTrajectoryAnimation(saved_result, animation_name, show_speed = True) :
-    with open(saved_result, "rb") as f:
-        out, x = pickle.load(f)
-
-    figure = plt.figure()
-    ax = figure.add_subplot(111)
-
-    left = x[:,:,0].min()
-    right = x[:,:,0].max()
-    down = x[:,:,1].min()
-    up = x[:,:,1].max()
+def make_real_animation(saved_result, animation_name) :
     
-    trajectory = x[:, 0, :2]
-    prediction = out[:, 0, :2]
-    
-    def AnimationFunction(i) :
-        ax.clear()
+    if isinstance(saved_result, str) :
+        with open(saved_result, "rb") as f:
+            out, x = pickle.load(f)
+    else :
+        out, x = saved_result
+
+    figure, ax = plt.subplots(ncols=2, sharey=True, figsize=(10, 5))
+    ax_true = ax[0]
+    ax_pred = ax[1]
+
+    left = 300
+    right = 600
+    down = 100
+    up = 350
+
+    def AnimationFunction(i):
+        ax_true.clear()
+        ax_pred.clear()
         
-        ax.plot(trajectory[:i, 0], trajectory[:i, 1], c='b', alpha=0.5, label="True trajectory")
-        ax.plot(prediction[:i, 0], prediction[:i, 1], c='r', alpha=0.5, label="Predicted trajectory")
+        pos_out = out[i, :, :2]
+        pos_x = x[i, :, :2]
+
+        #we have the following x,y, speed_x, speed_y,ori,major,minor,area
+        #but we will ignore the speed
         
-        ax.set_xlim(left, right)
-        ax.set_ylim(down, up)
+        orientation_out = out[i, :, 4] * 180 / np.pi
+        orientation_x = x[i, :, 4] * 180 / np.pi
         
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
+        major_out = out[i, :, 5]
+        major_x = x[i, :, 5]
         
-        ax.set_title("Cell trajectory (position) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+        minor_out = out[i, :, 6]
+        minor_x = x[i, :, 6]
         
-        ax.legend(["True trajectory", "Predicted trajectory"], loc="upper left")
+        #scatter ovals for the true and predicted
+        for j in range(pos_x.shape[0]) :
+            #if value is nan, we don't plot it
+            if np.isnan(pos_x[j, 0]) :
+                continue
+            ax_true.add_artist(Ellipse(pos_x[j, :2], major_x[j], minor_x[j], orientation_x[j], color='b', alpha=0.5))
+            ax_pred.add_artist(Ellipse(pos_out[j, :2], major_out[j], minor_out[j], orientation_out[j], color='r', alpha=0.5))
+            
         
-    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=100)
-    
+        for ax in [ax_true, ax_pred] :
+            ax.set_xlim(left, right)
+            ax.set_ylim(down, up)
+            
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            
+            ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+            
+    anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=70)
+
     #we can show the animation with the following
     #video = anim_created.to_html5_video()
     #html = display.HTML(video)
@@ -197,3 +223,4 @@ def singleCellTrajectoryAnimation(saved_result, animation_name, show_speed = Tru
     
     # good practice to close the plt object.
     plt.close()
+    

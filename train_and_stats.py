@@ -1,27 +1,20 @@
+from genericpath import exists
 import torch
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ChainedScheduler, ConstantLR
 
 import pickle
 
 import sys
 import os
-from genericpath import exists
 
 from cell_dataset import CellGraphDataset, loadDataset
 from cell_model import Gatv2Predictor
 from cell_utils import GraphingLoss, make_animation
 from cell_training import train, test_single, compute_parameters_draw, predict
 
-import torch_geometric
-from torch_geometric.explain import Explainer, AttentionExplainer
 from cell_dataset import loadDataset
 
-from genericpath import exists
-
-import networkx as nx
-
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
 import os, psutil
 process = psutil.Process(os.getpid())
@@ -47,13 +40,22 @@ import allium.summstats as ss
 import argparse
 
     
-def run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
+def run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, epochs, distrib, out, horizon) :
+    
+    aggr = "mean"
+    absolute = 0
 
-    name_complete = extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_" + distrib + "_" + aggr
+    name_complete = extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + distrib + "_" + str(out) + "_h" + str(horizon)
 
     print(name_complete)
+    
+    path_name = "models/new_model/out_" + str(out) + "_eps_-4/" + distrib + "/" + extension[6:] + "/h" + str(horizon) + "/"
+    
+    #make the directory if it does not exist
+    if not os.path.exists(path_name):
+        os.makedirs(path_name)
 
-    model_path = "models/out_8_eps_-2/" + distrib + "/" + extension[6:] + "/model" + name_complete
+    model_path = path_name + "model" + name_complete
     
     print(model_path)
 
@@ -62,57 +64,56 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     print("\nData loaded\n")
 
     def start(model : Gatv2Predictor, optimizer : torch.optim.Optimizer, scheduler  : torch.optim.lr_scheduler._LRScheduler,\
-            data_train : CellGraphDataset, data_test : CellGraphDataset, device : torch.device, epoch : int, offset : int, grapher : GraphingLoss, save=0, save_datasets=True):
-        
-        loss_history_train = {"loss_mean" : [], "loss_log" : [], "loss" : []}
+          data_train : CellGraphDataset, data_test : CellGraphDataset, device : torch.device, epoch : int, offset : int, grapher : GraphingLoss, save=0):
+    
         loss_history_test_recursive = {"loss_mean" : [], "loss_log" : [], "loss" : []}
+        loss_history_train = {"loss" : []}
         for e in range(offset, offset + epoch):
-            
-            recursive = True
 
-            train(model, optimizer, scheduler, data_train, device, e, process, max_epoch=offset+epoch, recursive=recursive, distrib=distrib, aggr=aggr)
+            train_loss = train(model, optimizer, scheduler, data_train, device, e, process, max_epoch=offset+epoch, distrib=distrib, aggr=aggr)
 
             #model.show_gradients()
             
-            if(e == 0 and save_datasets) :
-                data_train.thread = None
-                data_test.thread = None
-                with open("data/training" + extension + ".pkl", 'wb') as f:
-                    pickle.dump(data_train, f)
-                with open("data/testing" + extension + ".pkl", 'wb') as f:
-                    pickle.dump(data_test, f)
-                print("Saved datasets")
-            
+            if e != 0 :
+                loss_history_train["loss"] += train_loss
+                grapher.plot_losses(title="Training", data=loss_history_train, length=len(data_train), extension=name_complete + "_")
 
-            train_loss = test_single(model, data_train, device, loss_history_train, duration=0, recursive=False, distrib=distrib, aggr=aggr)
-            test_loss_r = test_single(model, data_test, device, loss_history_test_recursive, duration=0, recursive=True, distrib=distrib, aggr=aggr)
+            test_loss_r = test_single(model, data_test, device, loss_history_test_recursive, duration=0, distrib=distrib, aggr=aggr)
 
-            print("Epoch : ", e, "Train Loss", train_loss, "Test loss recursive : ", test_loss_r)
+            print("Epoch : ", e, "Test loss recursive : ", test_loss_r)
 
-            grapher.plot_losses(title="Training", data=loss_history_train, length=min(50, len(data_train)), extension=name_complete + "_") 
             grapher.plot_losses(title="Testing recursive", data=loss_history_test_recursive, length=min(50, len(data_test)), extension=name_complete + "_") 
             
-            if (e != 0 and e%save == 0) :      
+            if (e != 0 and e%save == 0) :
                 all_params_out, all_params_true = compute_parameters_draw(model, data_test, device, duration=-1, distrib=distrib)
                 grapher.plot_params(all_params_out, all_params_true, e, extension=name_complete)
             
             if (save and (e%save == 0 or e == epoch-1)) :
                 torch.save(model.state_dict(), model_path + str(e) + ".pt")
                 
-    model = Gatv2Predictor(in_channels=12, out_channels=8, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
+        #save the losses
+        with open(path_name + "losses" + name_complete + ".pkl", "wb") as f :
+            pickle.dump(loss_history_test_recursive, f)
+            pickle.dump(loss_history_train, f)
+                
+    model = Gatv2Predictor(in_channels=13, out_channels=out, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute, horizon=horizon)
     
     #Load model
-    
-
+    """
     epoch_to_load = 100
+    print("Loading model : ", model_path + str(epoch_to_load) + ".pt")
+    
     if exists(model_path + str(epoch_to_load) + ".pt") :
+        
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-
-
+    """
+    
     #might want to investigate AdamP 
-    optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
+    optimizer = AdamP(model.parameters(), lr=5e-4, betas=(0.9, 0.98), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
+    
     scheduler = CosineAnnealingWarmRestarts(optimizer=optimizer, T_0=10, T_mult=2)
+
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -121,17 +122,15 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     model = model.to(device)
 
     start(model, optimizer, scheduler, data_train, data_test, device, \
-            epochs, 0, grapher=grapher, save=50, save_datasets=False)
+            epochs, 0, grapher=grapher, save=50)
 
     print("\nFinished training\n")
 
 
-    data_y, data_x = predict(model, data_test, device, -1, recursive=True, distrib=distrib)
-    
+    data_y, data_x = predict(model, data_test, device, -1, distrib=distrib)
 
     data_y = torch.cat((data_y[:,1:,:,:2], data_y[:,1:,:,:2] - data_y[:,:-1,:,:2]), dim=3)
     data_x = torch.cat((data_x[:,1:,:,:2], data_x[:,1:,:,:2] - data_x[:,:-1,:,:2]), dim=3)
-
 
     #here we skip the first of the data because it has 0 speed and it makes the plot crash (1/0)
     data_y = data_y.cpu().numpy() #model
@@ -154,7 +153,8 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     ax[2].hist(speed_y_total, bins=100)
     ax[2].set_title("Speed distribution")
     ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
-    f.savefig("speed_distribution " + name_complete + ".png")
+    f.savefig(path_name + "speed_distribution " + name_complete + ".png")
+    plt.close()
 
     class Parameters(object):
         def __init__(self, p):
@@ -355,7 +355,13 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity magnitude distribution')
     plt.legend()
-    fig.savefig('svmd' + name_complete + '.pdf')
+    #also set the axis to center on x
+    plt.ylim(1e-4, 3e1)
+    fig.savefig(path_name + 'svmd' + name_complete + '.png')
+    plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'svmd' + name_complete + '.npy', np.array([velbins[2:]-db/2,vdist_x_mean,vdist_x_std,vdist_y_mean,vdist_y_std]))
 
     fig=plt.figure()
     db=velbins2[1]-velbins2[0]
@@ -367,7 +373,12 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity component distribution')
     plt.legend()
-    fig.savefig('svcd' + name_complete + '.pdf')
+    plt.ylim(2e-4,1e1)
+    fig.savefig(path_name + 'svcd' + name_complete + '.png')
+    plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'svcd' + name_complete + '.npy', np.array([velbins2[2:],vdist2_x_mean,vdist2_x_std,vdist2_y_mean,vdist2_y_std]))
 
     fig = plt.figure()
     xval=np.linspace(0,(Nsnap-1)*dt*output_time,num=Nsnap-1)
@@ -376,9 +387,14 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Model')
     plt.fill_between(xval,vav_y_mean+vav_y_std,vav_y_mean-vav_y_std,color='b',alpha=0.2)
     plt.xlabel('time')
-    plt.ylabel('mean velocity')
+    plt.ylabel('Mean velocity')
     plt.legend()
-    fig.savefig('mv' + name_complete + '.pdf')
+    plt.ylim(vav_x_mean.min() * 0.85,vav_x_mean.max() * 1.15)
+    fig.savefig(path_name + 'mv' + name_complete + '.png')
+    plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'mv' + name_complete + '.npy', np.array([xval,vav_x_mean,vav_x_std,vav_y_mean,vav_y_std]))
 
     fig=plt.figure()
     plt.loglog(tval,msd_x_mean,'r.-',lw=2, label='Data')
@@ -391,9 +407,16 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     plt.ylabel('MSD')
     plt.title('Mean square displacement')
     plt.legend()
-    fig.savefig('msd' + name_complete + '.pdf')
-
+    if extension.__contains__("_lv") :
+        plt.ylim(1e-2,msd_x_mean.max() * 1.05)
+    else :
+        plt.ylim(1,msd_x_mean.max() * 1.05)
+    fig.savefig(path_name + 'msd' + name_complete + '.png')
+    plt.close()
     print("Done")
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'msd' + name_complete + '.npy', np.array([tval,msd_x_mean,msd_x_std,msd_y_mean,msd_y_std]))
 
 if __name__ == "__main__" :
 
@@ -404,10 +427,10 @@ if __name__ == "__main__" :
     parser.add_argument('--extension', type=str, default="_open_ht_hv", help='extension of the dataset')
     parser.add_argument('--number_of_messages', type=int, default=2, help='number of messages')
     parser.add_argument('--size_of_messages', type=int, default=64, help='size of messages')
-    parser.add_argument('--absolute', type=int, default=0, help='absolute or relative')
     parser.add_argument('--epochs', type=int, default=0, help='number of epochs')
     parser.add_argument('--distrib', type=str, default="laplace", help='distribution')
-    parser.add_argument('--aggr', type=str, default="mean", help='aggregation')
+    parser.add_argument('--out', type=int, default=8, help='number of out channels')
+    parser.add_argument('--horizon', type=int, default=96, help='horizon')
 
     args = parser.parse_args()
 
@@ -417,9 +440,9 @@ if __name__ == "__main__" :
     extension = args.extension
     number_of_messages = args.number_of_messages
     size_of_messages = args.size_of_messages
-    absolute = args.absolute
     epochs = args.epochs
     distrib = args.distrib
-    aggr = args.aggr
+    out = args.out
+    horizon = args.horizon
     
-    run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, absolute, epochs, distrib, aggr)
+    run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, epochs, distrib, out, horizon)

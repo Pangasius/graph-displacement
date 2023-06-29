@@ -7,9 +7,9 @@ import sys
 import os
 from genericpath import exists
 
-from cell_dataset import RealCellGraphDataset, extract_real_train_test_val
+from cell_dataset import RealCellGraphDataset, cross_val_real
 from cell_model import Gatv2Predictor, Gatv2PredictorDiscr, ConvPredictor
-from cell_utils import GraphingLoss, make_animation
+from cell_utils import GraphingLoss, make_animation, make_real_animation
 from cell_training import train, test_single, compute_parameters_draw, run_single_recursive, run_single_recursive_draw, predict
 
 import matplotlib.pyplot as plt
@@ -38,9 +38,9 @@ import allium.summstats as ss
 import argparse
 
     
-def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
+def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr, leave_out=0) :
 
-    name_complete = "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_" + distrib + "_" + aggr
+    name_complete = "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + ("absolute" if absolute else "relative") + "_" + distrib + "_" + aggr + "_leave" + str(leave_out)
 
     print(name_complete)
 
@@ -48,60 +48,52 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
     
     print(model_path)
 
-    data_train, data_test, data_val = extract_real_train_test_val("data/cell_data/cell_data/exp_files/", inmemory=True, bg_load=False)
-
+    data_train, data_test = cross_val_real("data/cell_data/cell_data/", leave_out=leave_out)
+    
+    print("Pathes for training :")
+    print(data_train.paths.fget())
+    print("Pathes for testing :")
+    print(data_test.paths.fget())
+    
     print("\nData loaded\n")
 
     def start(model : Gatv2Predictor, optimizer : torch.optim.Optimizer, scheduler  : torch.optim.lr_scheduler._LRScheduler,\
-            data_train : RealCellGraphDataset, data_test : RealCellGraphDataset, device : torch.device, epoch : int, offset : int, grapher : GraphingLoss, save=0, save_datasets=True):
+            data_train : RealCellGraphDataset, data_test : RealCellGraphDataset, device : torch.device, epoch : int, offset : int, grapher : GraphingLoss, save=0):
         
-        loss_history_train = {"loss_mean" : [], "loss_log" : [], "loss" : []}
         loss_history_test_recursive = {"loss_mean" : [], "loss_log" : [], "loss" : []}
         for e in range(offset, offset + epoch):
-            
-            recursive = True
 
-            train(model, optimizer, scheduler, data_train, device, e, process, max_epoch=offset+epoch, recursive=recursive, distrib=distrib, aggr=aggr)
+            for i in range(20) :
+                train(model, optimizer, scheduler, data_train, device, e, process, max_epoch=offset+epoch, distrib=distrib, aggr=aggr)
+                
+            #reset the dataset to reprocess the data
+            #data_train.memory.clear()
 
-            #model.show_gradients()
-            
-            if(e == 0 and save_datasets) :
-                data_train.thread = None
-                data_test.thread = None
-                with open("data/training" + extension + ".pkl", 'wb') as f:
-                    pickle.dump(data_train, f)
-                with open("data/testing" + extension + ".pkl", 'wb') as f:
-                    pickle.dump(data_test, f)
-                print("Saved datasets")
-            
+            test_loss_r = test_single(model, data_test, device, loss_history_test_recursive, duration=0, distrib=distrib, aggr=aggr)
 
-            train_loss = test_single(model, data_train, device, loss_history_train, duration=0, recursive=False, distrib=distrib, aggr=aggr)
-            test_loss_r = test_single(model, data_test, device, loss_history_test_recursive, duration=0, recursive=True, distrib=distrib, aggr=aggr)
+            print("Epoch : ", e, "Test loss recursive : ", test_loss_r)
 
-            print("Epoch : ", e, "Train Loss", train_loss, "Test loss recursive : ", test_loss_r)
-
-            grapher.plot_losses(title="Training", data=loss_history_train, length=min(50, len(data_train)), extension=name_complete + "_") 
             grapher.plot_losses(title="Testing recursive", data=loss_history_test_recursive, length=min(50, len(data_test)), extension=name_complete + "_") 
             
             if (e != 0 and e%save == 0) :      
                 all_params_out, all_params_true = compute_parameters_draw(model, data_test, device, duration=-1, distrib=distrib)
                 grapher.plot_params(all_params_out, all_params_true, e, extension=name_complete)
             
-            if (save and (e%save == 0 or e == epoch-1)) :
+            if (e!=0 and save and (e%save == 0 or e == epoch-1)) :
                 torch.save(model.state_dict(), model_path + str(e) + ".pt")
                 
-    model = Gatv2Predictor(in_channels=12, out_channels=8, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
+    model = Gatv2Predictor(in_channels=10, out_channels=16, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute)
     
-    #Load model
-    
-    epoch_to_load = 100
+    #Load model  
+    """
+    epoch_to_load = 50
     if exists(model_path + str(epoch_to_load) + ".pt") :
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-    
+    """
 
     #might want to investigate AdamP 
-    optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
+    optimizer = AdamP(model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-6, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
     scheduler = CosineAnnealingWarmRestarts(optimizer=optimizer, T_0=10, T_mult=2)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -110,30 +102,67 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
 
     model = model.to(device)
 
-
     start(model, optimizer, scheduler, data_train, data_test, device, \
-            epochs, 0, grapher=grapher, save=50, save_datasets=False)
+            epochs, 0, grapher=grapher, save=100)
 
     print("\nFinished training\n")
 
-
-    data_y, data_x = predict(model, data_test, device, -1, recursive=True, distrib=distrib)
-    
-    if model.out_channels == 4 :
-        data_y = torch.cat((data_y[:,1:], data_y[:,1:,:,:] - data_y[:,:-1,:,:]), dim=3)
-        data_x = torch.cat((data_x[:,1:], data_x[:,1:,:,:] - data_x[:,:-1,:,:]), dim=3)
-    elif model.out_channels == 8 :
-        data_y = data_y[:,1:]
-        data_x = data_x[:,1:]
-    else :
-        raise Exception("Wrong number of channels")
+    data_y, data_x = predict(model, data_test, device, -1, distrib=distrib)
     
     #make an animation of the prediction
-    #make_animation((data_y[0].cpu().numpy(), data_x[0].cpu().numpy()), model_path + ".gif", True)
+    rval, edge_index, edge_attr, masks, position_scale, dim_scale = data_test.process_file(data_test.paths.fget()[0])
+    
+    #rescale the data
+    data_y[0,:,:,:4] = data_y[0,:,:,:4] * position_scale
+    data_y[0,:,:,5:7] = data_y[0,:,:,5:7] * dim_scale
+    data_y[0,:,:,7] = data_y[0,:,:,7] * dim_scale**2
+    
+    data_x[0,:,:,:4] = data_x[0,:,:,:4] * position_scale
+    data_x[0,:,:,5:7] = data_x[0,:,:,5:7] * dim_scale
+    data_x[0,:,:,7] = data_x[0,:,:,7] * dim_scale**2
+    
+
+    #make an animation of the prediction using all predicted parameters
+    make_real_animation((data_y[0].cpu().numpy(), data_x[0].cpu().numpy()), model_path + "_real.gif")
+    
+    data_y[data_y == 0] = np.nan
+    data_x[data_x == 0] = np.nan
+   
+    data_y = torch.cat((data_y[:,1:,:,:2], data_y[:,1:,:,:2] - data_y[:,:-1,:,:2]), dim=3)
+    data_x = torch.cat((data_x[:,1:,:,:2], data_x[:,1:,:,:2] - data_x[:,:-1,:,:2]), dim=3)
     
     #here we skip the first of the data because it has 0 speed and it makes the plot crash (1/0)
     data_y = data_y.cpu().numpy() #model
     data_x = data_x.cpu().numpy() #data
+    
+    #make an animation of the prediction
+    make_animation((data_y[0], data_x[0]), model_path + ".gif", True)
+    
+    #we will show the predicted distribution of speeds
+    speed_y_axis0 = data_y[:,:,:,2].flatten()
+    speed_y_axis1 = data_y[:,:,:,3].flatten()
+    speed_y_total = np.sqrt(speed_y_axis0**2 + speed_y_axis1**2)
+    f, ax = plt.subplots(1, 3, figsize=(10, 3))
+    ax[0].hist(speed_y_axis0, bins=100)
+    ax[0].set_title("Speed distribution in x")
+    ax[1].hist(speed_y_axis1, bins=100)
+    ax[1].set_title("Speed distribution in y")
+    ax[2].hist(speed_y_total, bins=100)
+    ax[2].set_title("Speed distribution of the model")
+    f.savefig("speed_distribution " + name_complete + ".png")
+    
+    #we will show the predicted distribution of speeds
+    speed_x_axis0 = data_x[:,:,:,2].flatten()
+    speed_x_axis1 = data_x[:,:,:,3].flatten()
+    speed_x_total = np.sqrt(speed_x_axis0**2 + speed_x_axis1**2)
+    f, ax = plt.subplots(1, 3, figsize=(10, 3))
+    ax[0].hist(speed_x_axis0, bins=100)
+    ax[0].set_title("Speed distribution in x")
+    ax[1].hist(speed_x_axis1, bins=100)
+    ax[1].set_title("Speed distribution in y")
+    ax[2].hist(speed_x_total, bins=100)
+    ax[2].set_title("Speed distribution of the data")
+    f.savefig("true_speed_distribution " + name_complete + ".png")
 
     class Parameters(object):
         def __init__(self, p):
@@ -245,37 +274,36 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
 
     msd_x = []
     msd_y = []
+    
+    duration = data_x.shape[1]
         
-    velbins=np.linspace(0,5,100)
-    velbins2=np.linspace(-2,2,100)
+    velbins=np.linspace(0,5,duration + 2)
+    velbins2=np.linspace(-2,2,duration + 2)
 
-        
     for i in range(data_x.shape[0]):
         data_x_i = data_x[i]
         data_y_i = data_y[i]
         
-        data_x_i_s = SyntheticData(loadtimes = [0,96], types = [0,1], debug = False, data = data_x_i, params = parameters, trackAll=True, dt = 1)
-        data_y_i_s = SyntheticData(loadtimes = [0,96], types = [0,1], debug = False, data = data_y_i, params = parameters, trackAll=True, dt = 1)
+        data_x_i_s = SyntheticData(loadtimes = [0,duration - 1], types = [0,1], debug = False, data = data_x_i, params = parameters, trackAll=True, dt = 1)
+        data_y_i_s = SyntheticData(loadtimes = [0,duration - 1], types = [0,1], debug = False, data = data_y_i, params = parameters, trackAll=True, dt = 1)
         
         Nsnap  = data_x_i_s.Nsnap
         dt = 0.01
         output_time = 200
-
-        vav, vdist,vdist2 = ss.getVelDist(data_x_i_s, velbins,velbins2, usetype=[0,1],verbose=False)
+        
+        vav, vdist, vdist2 = ss.getVelDist(data_x_i_s, velbins,velbins2, usetype=[0,1],verbose=False)
 
         vdist = vdist[1:]
-        vdist2 = vdist2[vdist2 != max(vdist2)]
+        vdist2 = vdist2[vdist2 != np.nanmax(vdist2)]
         
         vav_x.append(vav)
         vdist_x.append(vdist)
         vdist2_x.append(vdist2)
-        
-        velbins=np.linspace(0,5,100)
-        velbins2=np.linspace(-2,2,100)
-        vav, vdist,vdist2 = ss.getVelDist(data_y_i_s, velbins,velbins2, usetype=[0,1],verbose=False)
+
+        vav, vdist, vdist2 = ss.getVelDist(data_y_i_s, velbins,velbins2, usetype=[0,1],verbose=False)
 
         vdist = vdist[1:]
-        vdist2 = vdist2[vdist2 != max(vdist2)]
+        vdist2 = vdist2[vdist2 != np.nanmax(vdist2)]
         
         vav_y.append(vav)
         vdist_y.append(vdist)
@@ -323,7 +351,15 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
 
     msd_y_mean = np.mean(msd_y, axis=0)
     msd_y_std = np.std(msd_y, axis=0)
-    """
+    
+    print(velbins[2:].shape)
+    print(velbins2[2:].shape)
+    print(vdist_x_mean.shape)
+    print(vdist_y_mean.shape)
+    print(vdist2_x_mean.shape)
+    print(vdist2_y_mean.shape)
+    
+    
     fig=plt.figure()
     db=velbins[1]-velbins[0]
     plt.semilogy(velbins[2:]-db/2,vdist_x_mean,'r.-',lw=2, label='Data')
@@ -334,7 +370,7 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity magnitude distribution')
     plt.legend()
-    fig.savefig('svmd' + name_complete + '.pdf')
+    fig.savefig('svmd' + name_complete + '.png')
 
     fig=plt.figure()
     db=velbins2[1]-velbins2[0]
@@ -346,7 +382,7 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity component distribution')
     plt.legend()
-    fig.savefig('svcd' + name_complete + '.pdf')
+    fig.savefig('svcd' + name_complete + '.png')
 
     fig = plt.figure()
     xval=np.linspace(0,(Nsnap-1)*dt*output_time,num=Nsnap-1)
@@ -357,7 +393,7 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
     plt.xlabel('time')
     plt.ylabel('mean velocity')
     plt.legend()
-    fig.savefig('mv' + name_complete + '.pdf')
+    fig.savefig('mv' + name_complete + '.png')
 
     fig=plt.figure()
     plt.loglog(tval,msd_x_mean,'r.-',lw=2, label='Data')
@@ -370,68 +406,22 @@ def run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr) :
     plt.ylabel('MSD')
     plt.title('Mean square displacement')
     plt.legend()
-    fig.savefig('msd' + name_complete + '.pdf')
-    """
-    
-    #For each of those measures we will compute different similarity measures
-
-    def cosine_similarity(x,y):
-        return np.dot(x,y)/(np.linalg.norm(x)*np.linalg.norm(y))
-    
-    def pearson_correlation(x,y):
-        return np.corrcoef(x,y)[0,1]
-    
-    #Velocity magnitude distribution
-    cosine_vdist = cosine_similarity(vdist_x_mean,vdist_y_mean) * pearson_correlation(vdist_x_mean,vdist_y_mean)
-    
-    #Velocity component distribution
-    cosine_vcomp = cosine_similarity(vdist2_x_mean,vdist2_y_mean) * pearson_correlation(vdist2_x_mean,vdist2_y_mean)
-    
-    #Mean velocity
-    cosine_vav = cosine_similarity(vav_x_mean,vav_y_mean) * pearson_correlation(vav_x_mean,vav_y_mean)
-    
-    #Mean square displacement
-    cosine_msd = cosine_similarity(msd_x_mean,msd_y_mean) * pearson_correlation(msd_x_mean,msd_y_mean)
-    
-    #Plot the different measures
-    fig = plt.figure()
-    data = [cosine_vdist,cosine_vcomp,cosine_vav,cosine_msd]
-    plt.bar(np.arange(4),data)
-    plt.xticks(np.arange(4), ('Velocity magnitude distribution', 'Velocity component distribution', 'Mean velocity', 'Mean square displacement'))
-    plt.ylabel('Cosine similarity')
-    plt.title('Comparison of the different measures')
-    #angle the names
-    plt.xticks(rotation=45)
-    fig.savefig('comparison' + name_complete + '.pdf')
-
-    #Write the values in a file
-    with open('comparison' + name_complete + '.txt', 'w') as f:
-        f.write('Velocity magnitude distribution: ' + str(cosine_vdist) + '\n')
-        f.write('Velocity component distribution: ' + str(cosine_vcomp) + '\n')
-        f.write('Mean velocity: ' + str(cosine_vav) + '\n')
-        f.write('Mean square displacement: ' + str(cosine_msd) + '\n')
-    
+    fig.savefig('msd' + name_complete + '.png')
 
 if __name__ == "__main__" :
 
     parser = argparse.ArgumentParser(description='Train a model on a dataset')
-    parser.add_argument('--load_all', type=bool, default=True, help='load directly from a pickle')
-    parser.add_argument('--pre_separated', type=bool, default=False, help='if three subfolders already exist for train test and val')
-    parser.add_argument('--override', type=bool, default=False, help='make this true to always use the same ones')
-    parser.add_argument('--extension', type=str, default="_open_ht_hv", help='extension of the dataset')
     parser.add_argument('--number_of_messages', type=int, default=2, help='number of messages')
     parser.add_argument('--size_of_messages', type=int, default=64, help='size of messages')
     parser.add_argument('--absolute', type=int, default=0, help='absolute or relative')
     parser.add_argument('--epochs', type=int, default=0, help='number of epochs')
     parser.add_argument('--distrib', type=str, default="laplace", help='distribution')
     parser.add_argument('--aggr', type=str, default="mean", help='aggregation')
+    parser.add_argument('--leave_out', type=int, default=0, help='leave out')
 
     args = parser.parse_args()
 
-    load_all = args.load_all
-    pre_separated = args.pre_separated
-    override = args.override
-    extension = args.extension
+    leave_out = args.leave_out
     number_of_messages = args.number_of_messages
     size_of_messages = args.size_of_messages
     absolute = args.absolute
@@ -439,4 +429,4 @@ if __name__ == "__main__" :
     distrib = args.distrib
     aggr = args.aggr
     
-    run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, absolute, epochs, distrib, aggr)
+    run(number_of_messages, size_of_messages, absolute, epochs, distrib, aggr, leave_out)

@@ -138,6 +138,8 @@ dmypy.json
 model*.pkl
 model*.pt
 
+/models
+
 result*.pkl
 loss*.pkl
 Params*
@@ -146,4 +148,6 @@ Params*
 
 test*
 
-/allium
+/allium/*
+
+/result_archive
