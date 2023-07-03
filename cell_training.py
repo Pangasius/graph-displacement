@@ -35,10 +35,10 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib):
         returned, edge_index, edge_attr = data.get_edges(values[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, masks=masks, previous=out[current_time,:,:2].cpu())
             
         if model.out_channels == 4 :
-            values[:,:,2:4] = returned[:,:,2:4]
-        
-        #add back the degree of the node
-        values = torch.cat((values, returned[:,:,-1].unsqueeze(2).to(device)), dim=2)
+            values = returned.to(device)
+        else :
+            #add back the degree of the node
+            values = torch.cat((values, returned[:,:,-1].unsqueeze(2).to(device)), dim=2)
         
         out = torch.cat((out, values), dim=0)
         predicted_values = torch.cat((predicted_values, output.to(device)), dim=0)

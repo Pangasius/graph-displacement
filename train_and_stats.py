@@ -74,9 +74,8 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
             #model.show_gradients()
             
-            if e != 0 :
-                loss_history_train["loss"] += train_loss
-                grapher.plot_losses(title="Training", data=loss_history_train, length=len(data_train), extension=name_complete + "_")
+            loss_history_train["loss"] += train_loss
+            grapher.plot_losses(title="Training", data=loss_history_train, length=len(data_train), extension=name_complete + "_")
 
             test_loss_r = test_single(model, data_test, device, loss_history_test_recursive, duration=0, distrib=distrib, aggr=aggr)
 
@@ -110,7 +109,7 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     """
     
     #might want to investigate AdamP 
-    optimizer = AdamP(model.parameters(), lr=5e-4, betas=(0.9, 0.98), eps=1e-2, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
+    optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.98), eps=1e-4, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
     
     scheduler = CosineAnnealingWarmRestarts(optimizer=optimizer, T_0=10, T_mult=2)
 
