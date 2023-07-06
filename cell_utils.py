@@ -122,16 +122,16 @@ def make_animation(saved_result, animation_name, show_speed = True) :
         pos_x = x[i, :, :2]
 
         #now plot the graph as bubbles to show the difference between the two
-        ax_true.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="True position")
-        ax_pred.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Predicted position")
+        ax_true.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="Synthetic data position")
+        ax_pred.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Model position")
 
         if show_speed :
             speed_out = out[i, :, 2:]
             speed_x = x[i, :, 2:]
 
             #show an arrow for the speed
-            ax_true.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="True speed")
-            ax_pred.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Predicted speed")
+            ax_true.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="Synthetic data speed")
+            ax_pred.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Model speed")
         
         for ax in [ax_true, ax_pred] :
             ax.set_xlim(left, right)
@@ -139,10 +139,16 @@ def make_animation(saved_result, animation_name, show_speed = True) :
             
             ax.set_xlabel("x")
             ax.set_ylabel("y")
-            
-            ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
 
             ax.legend(loc="upper left")
+            
+
+        #make a global title
+        figure.suptitle("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+        
+        #save incrementally for the report
+        if i % 25 == 0 and i > 0 :
+            plt.savefig(animation_name.replace(".gif", "") + "_" + str(i) + ".png", format="png")
 
     anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=70)
 

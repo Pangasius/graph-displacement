@@ -40,10 +40,9 @@ import allium.summstats as ss
 import argparse
 
     
-def run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, epochs, distrib, out, horizon) :
+def run(load_all, pre_separated, override, extension, number_of_messages, size_of_messages, epochs, distrib, out, horizon, validation = False) :
     
     aggr = "mean"
-    absolute = 0
 
     name_complete = extension + "_" + str(number_of_messages) + "_" + str(size_of_messages) + "_" + distrib + "_" + str(out) + "_h" + str(horizon)
 
@@ -60,6 +59,10 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     print(model_path)
 
     data_train, data_test, data_val = loadDataset(load_all, extension, pre_separated, override)
+    
+    if validation :
+        print("\n VALIDATION MODE \n")
+        data_test = data_val
 
     print("\nData loaded\n")
 
@@ -90,23 +93,23 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
             if (save and (e%save == 0 or e == epoch-1)) :
                 torch.save(model.state_dict(), model_path + str(e) + ".pt")
                 
-        #save the losses
-        with open(path_name + "losses" + name_complete + ".pkl", "wb") as f :
-            pickle.dump(loss_history_test_recursive, f)
-            pickle.dump(loss_history_train, f)
+        if epoch > 0 :
+            #save the losses
+            with open(path_name + "losses" + name_complete + ".pkl", "wb") as f :
+                pickle.dump(loss_history_test_recursive, f)
+                pickle.dump(loss_history_train, f)
                 
-    model = Gatv2Predictor(in_channels=13, out_channels=out, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=absolute, horizon=horizon)
+    model = Gatv2Predictor(in_channels=13, out_channels=out, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=0, horizon=horizon)
     
     #Load model
-    """
-    epoch_to_load = 100
+    epoch_to_load = 50
     print("Loading model : ", model_path + str(epoch_to_load) + ".pt")
     
     if exists(model_path + str(epoch_to_load) + ".pt") :
         
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-    """
+    
     
     #might want to investigate AdamP 
     optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.98), eps=1e-4, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
@@ -138,21 +141,48 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     #make an animation of the prediction
     make_animation((data_y[0], data_x[0]), model_path + ".gif", True)
     
-    #we will show the predicted distribution of speeds
+    #we will show the distribution of speeds
+    speed_x_axis0 = data_x[:,:,:,2].flatten() 
+    speed_x_axis1 = data_x[:,:,:,3].flatten()
+    speed_x_total = np.sqrt(speed_x_axis0**2 + speed_x_axis1**2)
+    
     speed_y_axis0 = data_y[:,:,:,2].flatten()
     speed_y_axis1 = data_y[:,:,:,3].flatten()
-    speed_y_total = np.sqrt(speed_y_axis0**2 + speed_y_axis1**2)
+    speed_y_total = np.sqrt(speed_y_axis0**2 + speed_y_axis1**2) 
+    
     f, ax = plt.subplots(1, 3, figsize=(10, 3))
-    ax[0].hist(speed_y_axis0, bins=100)
+    
+    ax[0].hist(speed_y_axis0, bins=100, color="red", density=True, alpha=0.5)
+    ax[1].hist(speed_y_axis1, bins=100, color="red", density=True, alpha=0.5)
+    ax[2].hist(speed_y_total, bins=100, color="red", density=True, alpha=0.5)
+    
+    ax[0].hist(speed_x_axis0, bins=100, color="blue", density=True, alpha=0.5)
+    ax[1].hist(speed_x_axis1, bins=100, color="blue", density=True, alpha=0.5)
+    ax[2].hist(speed_x_total, bins=100, color="blue", density=True, alpha=0.5)
+    
     ax[0].set_title("Speed distribution in x")
-    ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
-    ax[1].hist(speed_y_axis1, bins=100)
     ax[1].set_title("Speed distribution in y")
-    ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
-    ax[2].hist(speed_y_total, bins=100)
     ax[2].set_title("Speed distribution")
+    ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
+    ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
     ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
-    f.savefig(path_name + "speed_distribution " + name_complete + ".png")
+    
+    #make a single x label
+    f.text(0.5, 0.04, 'Speed Magnitude', ha='center')
+    
+    #shift the graph up a bit to allow for the x label
+    f.subplots_adjust(bottom=0.15)
+    
+    #make a single y label
+    f.text(0.04, 0.5, 'Number of particles, normalized', va='center', rotation='vertical')
+    
+    #make a global title
+    f.suptitle('Speed distribution of the model (blue) and the data (red)')
+    
+    #make a little room for the title
+    f.subplots_adjust(top=0.85)
+    
+    f.savefig(path_name + "speed_distribution" + name_complete + ".png")
     plt.close()
 
     class Parameters(object):
@@ -346,10 +376,10 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
     fig=plt.figure()
     db=velbins[1]-velbins[0]
-    plt.semilogy(velbins[2:]-db/2,vdist_x_mean,'r.-',lw=2, label='Data')
-    plt.fill_between(velbins[2:]-db/2,vdist_x_mean+vdist_x_std,vdist_x_mean-vdist_x_std,color='r',alpha=0.2)
-    plt.semilogx(velbins[2:]-db/2,vdist_y_mean,'b.-',lw=2, label='Model')
-    plt.fill_between(velbins[2:]-db/2,vdist_y_mean+vdist2_y_std,vdist_y_mean-vdist_y_std,color='b',alpha=0.2)
+    plt.semilogy(velbins[2:]-db/2,vdist_x_mean,'b.-',lw=2, label='Synthetic Data')
+    plt.fill_between(velbins[2:]-db/2,vdist_x_mean+vdist_x_std,vdist_x_mean-vdist_x_std,color='b',alpha=0.2)
+    plt.semilogx(velbins[2:]-db/2,vdist_y_mean,'r.-',lw=2, label='Model')
+    plt.fill_between(velbins[2:]-db/2,vdist_y_mean+vdist2_y_std,vdist_y_mean-vdist_y_std,color='r',alpha=0.2)
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity magnitude distribution')
@@ -364,10 +394,10 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
     fig=plt.figure()
     db=velbins2[1]-velbins2[0]
-    plt.semilogy(velbins2[2:],vdist2_x_mean,'r.-',lw=2, label='Data')
-    plt.fill_between(velbins2[2:],vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,color='r',alpha=0.2)
-    plt.semilogx(velbins2[2:],vdist2_y_mean,'b.-',lw=2, label='Model')
-    plt.fill_between(velbins2[2:],vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color='b',alpha=0.2)
+    plt.semilogy(velbins2[2:],vdist2_x_mean,'b.-',lw=2, label='Synthetic Data')
+    plt.fill_between(velbins2[2:],vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,color='b',alpha=0.2)
+    plt.semilogx(velbins2[2:],vdist2_y_mean,'r.-',lw=2, label='Model')
+    plt.fill_between(velbins2[2:],vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color='r',alpha=0.2)
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
     plt.title('Scaled velocity component distribution')
@@ -381,12 +411,13 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
 
     fig = plt.figure()
     xval=np.linspace(0,(Nsnap-1)*dt*output_time,num=Nsnap-1)
-    plt.plot(xval,vav_x_mean,'r.-',lw=2, label='Data')
-    plt.fill_between(xval,vav_x_mean+vav_x_std,vav_x_mean-vav_x_std,color='r',alpha=0.2)
-    plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Model')
-    plt.fill_between(xval,vav_y_mean+vav_y_std,vav_y_mean-vav_y_std,color='b',alpha=0.2)
+    plt.plot(xval,vav_x_mean,'b.-',lw=2, label='Synthetic Data')
+    plt.fill_between(xval,vav_x_mean+vav_x_std,vav_x_mean-vav_x_std,color='b',alpha=0.2)
+    plt.plot(xval,vav_y_mean,'r.-',lw=2, label='Model')
+    plt.fill_between(xval,vav_y_mean+vav_y_std,vav_y_mean-vav_y_std,color='r',alpha=0.2)
     plt.xlabel('time')
     plt.ylabel('Mean velocity')
+    plt.title('Mean velocity')
     plt.legend()
     plt.ylim(vav_x_mean.min() * 0.85,vav_x_mean.max() * 1.15)
     fig.savefig(path_name + 'mv' + name_complete + '.png')
@@ -396,12 +427,13 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     np.save(path_name + 'mv' + name_complete + '.npy', np.array([xval,vav_x_mean,vav_x_std,vav_y_mean,vav_y_std]))
 
     fig=plt.figure()
-    plt.loglog(tval,msd_x_mean,'r.-',lw=2, label='Data')
-    plt.fill_between(tval,msd_x_mean+msd_x_std,msd_x_mean-msd_x_std,color='r',alpha=0.2)
-    plt.loglog(tval,msd_x_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="orange")
-    plt.loglog(tval,msd_y_mean,'b.-',lw=2, label='Model')
-    plt.fill_between(tval,msd_y_mean+msd_y_std,msd_y_mean-msd_y_std,color='b',alpha=0.2)
-    plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="cyan")
+    plt.loglog(tval,msd_x_mean,'b.-',lw=2, label='Synthetic Data')
+    plt.fill_between(tval,msd_x_mean+msd_x_std,msd_x_mean-msd_x_std,color='b',alpha=0.2)
+    plt.loglog(tval,msd_x_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="cyan")
+    
+    plt.loglog(tval,msd_y_mean,'r.-',lw=2, label='Model')
+    plt.fill_between(tval,msd_y_mean+msd_y_std,msd_y_mean-msd_y_std,color='r',alpha=0.2)
+    plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="orange")
     plt.xlabel('time (hours)')
     plt.ylabel('MSD')
     plt.title('Mean square displacement')
