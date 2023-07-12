@@ -1,6 +1,6 @@
 from genericpath import exists
 import torch
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ChainedScheduler, ConstantLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 import pickle
 
@@ -102,14 +102,14 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     model = Gatv2Predictor(in_channels=13, out_channels=out, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, absolute=0, horizon=horizon)
     
     #Load model
+    """
     epoch_to_load = 50
     print("Loading model : ", model_path + str(epoch_to_load) + ".pt")
     
     if exists(model_path + str(epoch_to_load) + ".pt") :
-        
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-    
+    """
     
     #might want to investigate AdamP 
     optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.98), eps=1e-4, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)
@@ -139,7 +139,7 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     data_x = data_x.cpu().numpy() #data
     
     #make an animation of the prediction
-    make_animation((data_y[0], data_x[0]), model_path + ".gif", True)
+    #make_animation((data_y[0], data_x[0]), model_path + ".gif", True)
     
     #we will show the distribution of speeds
     speed_x_axis0 = data_x[:,:,:,2].flatten() 
@@ -177,7 +177,7 @@ def run(load_all, pre_separated, override, extension, number_of_messages, size_o
     f.text(0.04, 0.5, 'Number of particles, normalized', va='center', rotation='vertical')
     
     #make a global title
-    f.suptitle('Speed distribution of the model (blue) and the data (red)')
+    f.suptitle('Speed magnitude distribution of the synthetic data (blue) and the model (red)')
     
     #make a little room for the title
     f.subplots_adjust(top=0.85)

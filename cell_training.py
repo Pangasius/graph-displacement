@@ -132,7 +132,10 @@ def run_single_recursive(model : Gatv2Predictor, data, i : int, device : torch.d
     if isinstance(model, GraphEvolutionDiscr) :
         raise Exception("Relative loss not implemented for GraphEvolutionDiscr")
     else :
-        loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
+        if isinstance(data, RealCellGraphDataset) :
+            loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks, wrapped_columns=[4])
+        else :
+            loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
             
     return loss 
 
@@ -183,7 +186,12 @@ def train(model : Gatv2Predictor, optimizer : torch.optim.Optimizer, scheduler :
         optimizer.zero_grad()
 
         #duration is a random number between 2 and the maximum duration
-        duration =  min(epoch + 2, 8)
+        if isinstance(data, RealCellGraphDataset) :
+            duration =  min(epoch + 2, 4)
+        elif isinstance(data, CellGraphDataset) :
+            duration =  min(epoch + 2, 8)
+        else :
+            raise ValueError("The data type is not supported")
 
         loss = run_single_recursive(model, data, i, device, duration=duration, distrib=distrib, aggr=aggr) 
 

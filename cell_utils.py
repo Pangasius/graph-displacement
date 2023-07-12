@@ -190,8 +190,8 @@ def make_real_animation(saved_result, animation_name) :
         #we have the following x,y, speed_x, speed_y,ori,major,minor,area
         #but we will ignore the speed
         
-        orientation_out = out[i, :, 4] * 180 / np.pi
-        orientation_x = x[i, :, 4] * 180 / np.pi
+        orientation_out = out[i, :, 4] * 360 / np.pi - 90
+        orientation_x = x[i, :, 4] * 360 / np.pi - 90
         
         major_out = out[i, :, 5]
         major_x = x[i, :, 5]
@@ -215,7 +215,7 @@ def make_real_animation(saved_result, animation_name) :
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             
-            ax.set_title("Cell movement (position and speed) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
+        figure.suptitle("Cell movement (position and orientation) at time " + str(i) + " (out of " + str(x.shape[0]) + ")")
             
     anim_created = FuncAnimation(figure, AnimationFunction, frames=x.shape[0], interval=70)
 

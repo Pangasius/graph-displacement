@@ -2,19 +2,16 @@ import os
 
 epoch = 51
 
-extensions = ["_open_ht_hv", "_open_lt_hv", "_open_lt_lv", "_open_ht_lv"]
 number_of_messages = [1,2,3,4]
-size_of_messages = [32, 64, 128, 256]
-distribs = ["laplace", "normal"]
-out_channels = [4,8]
+size_of_messages = [64, 128, 256]
 horizons = [1,2,3,4,5]
 
-base_extension = "_open_lt_hv"
-base_number_of_message = 4
-base_size_of_message = 128
+base_extension = "_open_lt_lv"
+base_number_of_message = 2
+base_size_of_message = 256
 base_distrib = "laplace"
 base_out = 8
-base_horizon = 5
+base_horizon = 2
 
 slurm_script = "\
 #!/usr/bin/env bash\n\
@@ -38,26 +35,29 @@ cd /home/lpirenne/graph-displacement/\n\
 python train_and_stats.py --extension {extension} --number_of_message {number_of_message} --size_of_messages {size_of_message} --epochs {epoch} --distrib {distrib} --out {out} --horizon {horizon}\n\
 "
 
+combination_done = []
+
 def launch(extension=base_extension, 
            number_of_message=base_number_of_message,
            size_of_message=base_size_of_message,
            distrib=base_distrib,
            out=base_out, 
            horizon=base_horizon):
+    
+    if (extension, number_of_message, size_of_message, distrib, out, horizon) in combination_done :
+        print("Skipped", extension, number_of_message, size_of_message, distrib, out, horizon)
+        return
+    else :
+        combination_done.append((extension, number_of_message, size_of_message, distrib, out, horizon))
+    
     with open("slurm_files/cell_pred.sbatch", "w") as f:
         f.write(slurm_script.format(extension=extension, number_of_message=number_of_message, size_of_message=size_of_message, epoch=epoch, distrib=distrib, out=out, horizon=horizon))
 
     os.system("sbatch slurm_files/cell_pred.sbatch")
 
-for extension in extensions:
-    launch(extension=extension)
 for number_of_message in number_of_messages:
     launch(number_of_message=number_of_message)
 for size_of_message in size_of_messages:
     launch(size_of_message=size_of_message)
-for distrib in distribs:
-    launch(distrib=distrib)
-for out in out_channels:
-    launch(out=out)
 for horizon in horizons:
     launch(horizon=horizon)

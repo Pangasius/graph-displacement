@@ -441,29 +441,19 @@ class RealCellGraphDataset(CellGraphDataset):
             return self.memory[path]
         
         rval, masks = self.find_data_and_masks(path)
-
-        position_scale = rval[:,:,:2].mean()
-        rval[:,:,:2] /= position_scale
-        
-        dim_scale = rval[:,:,3:5].mean()
-        rval[:,:,3:5] /= dim_scale
-        rval[:,:,5] /= dim_scale**2
         
         rval_position = rval[:,:,:2]
         
         rval_position, edge_index, edge_attr = self.get_edges(rval_position, self.max_degree, wrap=self.wrap, masks=masks)
         
         #we concat x,y,dx,dy,degree with ori,major,minor,area
-        rval = torch.cat((rval_position, rval[:,:,2:]), dim=2)
-        
-        #swap the fifth column with the rest such that the degree is the last column
         #we have thus x,y,dx,dy,ori,major,minor,area,degree
-        rval = torch.cat((rval[:,:,:5], rval[:,:,6:], rval[:,:,5:6]), dim=2)
+        rval = torch.cat((rval_position[:,:,:4], rval[:,:,2:], rval_position[:,:,4:]), dim=2)
 
         if self.memorize :
-            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks, position_scale, dim_scale)
+            self.memory[path] = (rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks)
 
-        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks, position_scale, dim_scale
+        return rval.to(torch.float), edge_index.to(torch.long), edge_attr.to(torch.float), masks
                 
     class each_path():
         def __init__(self, root : str | list[str], max_size : int):
@@ -494,7 +484,7 @@ class RealCellGraphDataset(CellGraphDataset):
     def find_appropriate_time(self, out, duration=-1):
             
         #we will find a time length of at least duration in which there are no cells that appear or disappear
-        rval, edge_index, edge_attr, masks, position_scale, dim_scale  = out
+        rval, edge_index, edge_attr, masks = out
         
         xshape = rval.shape
         

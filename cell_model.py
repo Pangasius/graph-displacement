@@ -52,7 +52,7 @@ class Gatv2Predictor(torch.nn.Module):
         #encode
         x = self.encoder_resize(x.view(-1, self.in_channels)).view(self.horizon, -1, self.hidden_channels)
         
-        x = self.transformer_encoder(x, is_causal=True)
+        x = self.transformer_encoder(x)
         
         x = x.mean(dim=0, keepdim=True)
         
@@ -111,7 +111,7 @@ class Gatv2Predictor(torch.nn.Module):
                 if param.grad != None :
                     print(name, param.grad.mean())
 
-    def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None):
+    def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None, wrapped_columns=[]) :
         if target.shape[0] != pred.shape[0] + 1 :
             raise Exception("target.shape[0] != pred.shape[0] + 1")
         
@@ -125,29 +125,39 @@ class Gatv2Predictor(torch.nn.Module):
         
         std = torch.exp(log_std)
     
-        return self.diff(mu, std, log_std, targ, loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
+        return self.diff(mu, std, log_std, targ, loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks, wrap_columns=wrapped_columns)
     
-    def diff(self, mu, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, aggr = 'mean', masks=None) :
+    def diff(self, mu, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, aggr = 'mean', masks=None, wrap_columns=[]) :
         target = target.to(mu.device)
 
         #see https://glouppe.github.io/info8010-deep-learning/pdf/lec10.pdf
         #slide 16
-           
+        
+        not_wrap_columns = [i for i in range(self.out_channels//2) if i not in wrap_columns]
+        
         if distrib == 'normal' :
-            diff = (mu - target)**2
+            diff_not_wrapped = (mu[:, :, not_wrap_columns] - target[:, :, not_wrap_columns]) ** 2
+            
+            wrapped_diff = torch.abs((mu[:, :, wrap_columns] - target[:, :, wrap_columns]))
+            diff_wrapped = torch.sin(wrapped_diff) + 0.01 * wrapped_diff
+            
+            diff = torch.cat((diff_not_wrapped, diff_wrapped), dim=2)
 
             if self.wrap :
-                #https://www.geogebra.org/m/fvsyepzd
-                diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20
+                diff = torch.sin(diff * torch.pi)
 
             loss_mean = diff / (2 * std**2) 
             loss_log = log_std
         elif distrib == 'laplace' :
-            diff = torch.abs((mu - target))
+            diff_not_wrapped = torch.abs((mu[:, :, not_wrap_columns] - target[:, :, not_wrap_columns]))
+            
+            wrapped_diff = torch.abs((mu[:, :, wrap_columns] - target[:, :, wrap_columns]))
+            diff_wrapped = torch.sin(wrapped_diff) + 0.01 * wrapped_diff
+            
+            diff = torch.cat((diff_not_wrapped, diff_wrapped), dim=2)
 
             if self.wrap :
-                #https://www.geogebra.org/m/fvsyepzd
-                diff = torch.sin(diff * torch.pi) + torch.square(diff) / 20 
+                diff = torch.sin(diff * torch.pi) 
             
             loss_mean = diff / (std)
             loss_log = log_std

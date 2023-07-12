@@ -60,7 +60,7 @@ def compile_msd(part_of_interest, values) :
     plt.title('Mean square displacement over time')
     plt.legend()
 
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_msd.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_msd" + base_extension[0] + ".png")
     
     plt.close()
     
@@ -84,7 +84,7 @@ def compile_mv(part_of_interest, values) :
     plt.title('Mean velocity over time')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_mv.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_mv" + base_extension[0] + ".png")
     
     plt.close()
     
@@ -108,7 +108,7 @@ def compile_svcd(part_of_interest, values) :
     plt.title('Scaled velocity component distribution')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svcd.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svcd" + base_extension[0] + ".png")
     
     plt.close()
     
@@ -132,7 +132,7 @@ def compile_svmd(part_of_interest, values) :
     plt.title('Scaled velocity magnitude distribution')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svmd.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svmd" + base_extension[0] + ".png")
     
     plt.close()
     
@@ -144,7 +144,7 @@ def compile_losses(part_of_interest, values) :
         
         color = next(plt.gca()._get_lines.prop_cycler)['color']
         
-        plt.loglog(values[list(values.keys())[i]][0]["loss"], label=label, color=color)
+        plt.semilogx(values[list(values.keys())[i]][0]["loss"], label=label, color=color)
         
         #plt.loglog(values[list(values.keys())[i]][0]["loss_mean"], linestyle=':', color=color)
         
@@ -158,7 +158,7 @@ def compile_losses(part_of_interest, values) :
     #move the graph slightly to the right for the ylabel to be in the figure
     plt.subplots_adjust(left=0.15)
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_testing_losses.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_testing_losses" + base_extension[0] + ".png")
     
     plt.close(f)
     
@@ -166,14 +166,14 @@ def compile_losses(part_of_interest, values) :
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.loglog(values[list(values.keys())[i]][1]["loss"], label=label)
+        plt.semilogx(values[list(values.keys())[i]][1]["loss"], label=label)
     
     plt.xlabel('Samples')
     plt.ylabel('Loss')
     plt.title('Training Loss over training samples')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_training_losses.png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_training_losses" + base_extension[0] + ".png")
     
     plt.close(f)
 
