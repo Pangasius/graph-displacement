@@ -383,6 +383,9 @@ def run(number_of_messages, size_of_messages, epochs, distrib, horizon, leave_ou
     plt.legend()
     fig.savefig(path_name + 'svmd' + name_complete + '.png')
     plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'svmd' + name_complete + '.npy', np.array([velbins[2:]-db/2,vdist_x_mean,vdist_x_std,vdist_y_mean,vdist_y_std]))
 
     fig=plt.figure()
     db=velbins2[1]-velbins2[0]
@@ -396,6 +399,9 @@ def run(number_of_messages, size_of_messages, epochs, distrib, horizon, leave_ou
     plt.legend()
     fig.savefig(path_name + 'svcd' + name_complete + '.png')
     plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'svcd' + name_complete + '.npy', np.array([velbins2[2:],vdist2_x_mean,vdist2_x_std,vdist2_y_mean,vdist2_y_std]))
 
     fig = plt.figure()
     xval=np.linspace(0,(Nsnap-1)*dt*output_time,num=Nsnap-1)
@@ -408,6 +414,10 @@ def run(number_of_messages, size_of_messages, epochs, distrib, horizon, leave_ou
     plt.title('Mean velocity')
     plt.legend()
     fig.savefig(path_name + 'mv' + name_complete + '.png')
+    plt.close()
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'mv' + name_complete + '.npy', np.array([xval,vav_x_mean,vav_x_std,vav_y_mean,vav_y_std]))
 
     fig=plt.figure()
     plt.loglog(tval,msd_x_mean,'b.-',lw=2, label='Real Data')
@@ -421,6 +431,12 @@ def run(number_of_messages, size_of_messages, epochs, distrib, horizon, leave_ou
     plt.title('Mean square displacement')
     plt.legend()
     fig.savefig(path_name + 'msd' + name_complete + '.png')
+    
+    plt.close()
+    print("Done")
+    
+    #save the data of the mean of the distribution
+    np.save(path_name + 'msd' + name_complete + '.npy', np.array([tval,msd_x_mean,msd_x_std,msd_y_mean,msd_y_std]))
 
 if __name__ == "__main__" :
 
