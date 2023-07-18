@@ -9,7 +9,7 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
     out = x[0].detach().clone().unsqueeze(dim=0).to(device)
     predicted_values = torch.tensor([]).to(device)
 
-    _, edge_index, edge_attr = data.get_edges(out[0,:,:2].cpu(), data.max_degree, wrap=data.wrap, masks=masks[0])
+    _, edge_index, edge_attr = data.get_edges(out[0,:,:2], data.max_degree, wrap=data.wrap, masks=masks[0])
     
     horizon = model.horizon
         
@@ -21,10 +21,6 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
         
         input_model = torch.cat((recent, time), dim=2)
         
-        #pad the missing time until horizon
-        if input_model.shape[0] < horizon :
-            input_model = torch.cat((torch.zeros((horizon - input_model.shape[0], input_model.shape[1], input_model.shape[2]), device=device), input_model), dim=0)
-        
         output = model(input_model, edge_index.to(device), edge_attr.to(device), params, many_many=many_many)
         
         if draw : 
@@ -32,11 +28,11 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
         else :
             values = output[:,:,:model.out_channels//2] + out[current_time,:,:model.out_channels//2]
         
-        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks[current_time:])
+        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks[current_time+1])
         
         if values.shape[0] > 1 and values.shape[0] < duration - 1:
             #very slow thing 
-            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks[current_time:])
+            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks[current_time+1])
                 
         if model.out_channels == 4 :
             values = returned

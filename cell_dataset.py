@@ -151,10 +151,10 @@ class CellGraphDataset(Dataset):
             rval = rval.unsqueeze(0)
             
         if previous is not None and len(previous.shape) == 2 :
-            previous = previous.unsqueeze(0)
+            previous = previous.unsqueeze(0).to(rval.device)
             
         if masks is not None and len(masks.shape) == 2 :
-            masks = masks.unsqueeze(0)
+            masks = masks.unsqueeze(0).to(rval.device)
         
         T = rval.shape[0]
         N = rval.shape[1]
@@ -166,17 +166,17 @@ class CellGraphDataset(Dataset):
                 #repeat the last value of the mask to have the same shape as rval
                 diff = T - masks.shape[0]
                 if diff > 0 :
-                    masks = torch.cat((masks, masks[-1, :, :].repeat((diff, 1, 1))), dim=0)
+                    masks = torch.cat((masks, masks[-1, :, :].unsqueeze(0).repeat((diff, 1, 1))), dim=0)
                 
-                rval_masked = torch.where(masks.to(torch.bool).to(rval.device), torch.tensor([np.nan, np.nan]).to(rval.device), rval)
+                rval_masked = torch.where(masks.to(torch.bool).to(rval.device), rval, torch.tensor([np.nan, np.nan]).to(rval.device))
             else :
                 rval_masked = rval
         
-            rval_masked = rval_masked.reshape(T*N, -1)
-            
+            rval_masked = rval_masked.reshape(T*N, -1).to(rval.device)
+
             #edge_index = radius_graph(rval, r = cutoff, batch=batch, loop=False, max_num_neighbors=max_degree)
             edge_index = knn_graph(rval_masked, k = max_degree, batch=batch, loop=True, flow="source_to_target")
-            
+
             rval = rval.reshape(T*N, -1)
             
             edge_attr = (rval[edge_index[0, :], :2] - rval[edge_index[1, :], :2]).reshape(-1,2)

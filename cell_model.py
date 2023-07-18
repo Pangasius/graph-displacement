@@ -88,7 +88,11 @@ class Gatv2Predictor(torch.nn.Module):
     def forward(self, x, edge_index, edge_attr, params=None, only_mean=False, many_many=False):
         if len(x.shape) == 2 :
             x = x.unsqueeze(0)
-            
+        
+        if self.horizon != x.shape[0]:
+            #pad the missing time until horizon
+            x = torch.cat((torch.zeros((self.horizon - x.shape[0], x.shape[1], x.shape[2]), device=x.device), x), dim=0)
+        
         #add to x the params 
         xshape = x.shape
         
@@ -127,6 +131,20 @@ class Gatv2Predictor(torch.nn.Module):
         now = target[1:].to(pred.device)
         
         targ = now - previous
+        
+        """
+        #sort the masks and target in the same order
+        perms = torch.argsort(targ, dim=1)
+        targ = torch.gather(targ, 1, perms)
+        
+        if masks is not None :
+            masks = torch.gather(masks[1:], 1, perms[:,:,0].unsqueeze(2))
+             
+        pred = torch.sort(pred, dim=1)[0]
+        """
+        
+        if masks is not None :
+            masks = masks[1:].to(pred.device)
         
         log_std = pred[:,:,self.out_channels//2:]
         mu = pred[:,:,:self.out_channels//2]
@@ -173,9 +191,9 @@ class Gatv2Predictor(torch.nn.Module):
             raise ValueError('distrib must be normal or laplace')
 
         if masks is not None :
-            diff = diff * masks[1:]
-            loss_log = loss_log * masks[1:]
-            loss_mean = loss_mean * masks[1:]
+            diff = diff * masks
+            loss_log = loss_log * masks
+            loss_mean = loss_mean * masks
         
         if aggr == 'mean' :
             loss = torch.mean(loss_mean + loss_log)
