@@ -9,7 +9,7 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
     out = x[0].detach().clone().unsqueeze(dim=0).to(device)
     predicted_values = torch.tensor([]).to(device)
 
-    _, edge_index, edge_attr = data.get_edges(out[:,:,:2].cpu(), data.max_degree, wrap=data.wrap, masks=masks)
+    _, edge_index, edge_attr = data.get_edges(out[0,:,:2].cpu(), data.max_degree, wrap=data.wrap, masks=masks[0])
     
     horizon = model.horizon
         
@@ -32,11 +32,11 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
         else :
             values = output[:,:,:model.out_channels//2] + out[current_time,:,:model.out_channels//2]
         
-        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks)
+        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks[current_time:])
         
-        if values.shape[0] > 1:
+        if values.shape[0] > 1 and values.shape[0] < duration - 1:
             #very slow thing 
-            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks)
+            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks[current_time:])
                 
         if model.out_channels == 4 :
             values = returned

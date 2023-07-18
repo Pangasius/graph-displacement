@@ -152,6 +152,9 @@ class CellGraphDataset(Dataset):
             
         if previous is not None and len(previous.shape) == 2 :
             previous = previous.unsqueeze(0)
+            
+        if masks is not None and len(masks.shape) == 2 :
+            masks = masks.unsqueeze(0)
         
         T = rval.shape[0]
         N = rval.shape[1]
@@ -160,6 +163,11 @@ class CellGraphDataset(Dataset):
             batch = torch.arange(T).repeat_interleave(N).to(torch.long).to(rval.device)
             
             if masks is not None :
+                #repeat the last value of the mask to have the same shape as rval
+                diff = T - masks.shape[0]
+                if diff > 0 :
+                    masks = torch.cat((masks, masks[-1, :, :].repeat((diff, 1, 1))), dim=0)
+                
                 rval_masked = torch.where(masks.to(torch.bool).to(rval.device), torch.tensor([np.nan, np.nan]).to(rval.device), rval)
             else :
                 rval_masked = rval
@@ -517,7 +525,7 @@ class RealCellGraphDataset(CellGraphDataset):
         xshape = rval.shape
         
         #we will reconstruct the edge_index and edge_attr
-        rval_position, edge_index, edge_attr = self.get_edges(rval[0,:,:2], self.max_degree, wrap=self.wrap, masks=None, previous=rval[0,:,:2]) #we don't care about previous
+        rval_position, edge_index, edge_attr = self.get_edges(rval[0,:,:2], self.max_degree, wrap=self.wrap, masks=masks[0], previous=rval[0,:,:2]) #we don't care about previous
         
         #reassign the degree
         rval[0,:,-1] = rval_position[0,:,-1]
