@@ -3,32 +3,29 @@ import pickle as pkl
 
 import matplotlib.pyplot as plt
 
-epoch = 51
+epoch = 1601
 
 number_of_messages = [1,2,3,4]
 size_of_messages = [32, 64, 128, 256, 512, 1024]
 distribs = ["laplace", "normal"]
-out_channels = [4,8]
 horizons = [1,2,3,4,5]
 
-base_extension = ["_open_lt_hv"]
-base_number_of_message = [4]
-base_size_of_message = [128]
+base_number_of_message = [2]
+base_size_of_message = [256]
 base_distrib = ["laplace"]
-base_out = [8]
-base_horizon = [5]
+base_horizon = [1]
+base_leave = [0]
 
-base_entry = {"extension": base_extension,
+base_entry = {"leave": base_leave,
                             "number_of_messages": base_number_of_message,
                             "size_of_messages": base_size_of_message,
                             "distribution": base_distrib,
-                            "out_channels": base_out,
                             "horizon": base_horizon}
 
 def fetch_data(entry, prefix, suffix) :
-    name_complete = entry["extension"][0] + "_" + str(entry["number_of_messages"][0]) + "_" + str(entry["size_of_messages"][0]) + "_" + entry["distribution"][0] + "_" + str(entry["out_channels"][0]) + "_h" + str(entry["horizon"][0])
+    name_complete = "_" + str(entry["number_of_messages"][0]) + "_" + str(entry["size_of_messages"][0]) + "_" + entry["distribution"][0] + "_h" + str(entry["horizon"][0]) + "_leave" + str(entry["leave"][0])
     
-    path_name = "models/new_model/out_" + str(entry["out_channels"][0]) + "_eps_-4/" + entry["distribution"][0] + "/" + entry["extension"][0][6:] + "/h" + str(entry["horizon"][0]) + "/"
+    path_name = "models/real/" + entry["distribution"][0] + "/h" + str(entry["horizon"][0]) + "/"
     
     if suffix == ".npy" :
         data = np.load(path_name + prefix + name_complete + suffix)
@@ -46,7 +43,7 @@ def compile_msd(part_of_interest, values) :
     tval = values[list(values.keys())[0]][0]
     msd_y_mean = values[list(values.keys())[0]][1]
     
-    plt.loglog(tval,msd_y_mean,'b.-',lw=2, label='Synthetic data')
+    plt.loglog(tval,msd_y_mean,'b.-',lw=2, label='Real data')
     plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="cyan")
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
@@ -59,7 +56,7 @@ def compile_msd(part_of_interest, values) :
     plt.title('Mean square displacement over time')
     plt.legend()
 
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_msd" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_msd" + str(base_leave[0]) + ".png")
     
     plt.close()
     
@@ -68,7 +65,7 @@ def compile_mv(part_of_interest, values) :
     vav_y_mean = values[list(values.keys())[0]][1]
     vav_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Synthetic data')
+    plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Real data')
     plt.fill_between(xval, vav_y_mean-vav_y_std, vav_y_mean+vav_y_std, alpha=0.2, color='b')
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
@@ -83,7 +80,7 @@ def compile_mv(part_of_interest, values) :
     plt.title('Mean velocity over time')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_mv" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_mv" + str(base_leave[0]) + ".png")
     
     plt.close()
     
@@ -92,7 +89,7 @@ def compile_svcd(part_of_interest, values) :
     vdist2_y_mean = values[list(values.keys())[0]][1]
     vdist2_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(velbins2,vdist2_y_mean,'b.-',lw=2, label='Synthetic data')
+    plt.plot(velbins2,vdist2_y_mean,'b.-',lw=2, label='Real data')
     plt.fill_between(velbins2,vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color='b',alpha=0.2)
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
@@ -107,7 +104,7 @@ def compile_svcd(part_of_interest, values) :
     plt.title('Scaled velocity component distribution')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svcd" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svcd" + str(base_leave[0]) + ".png")
     
     plt.close()
     
@@ -116,7 +113,7 @@ def compile_svmd(part_of_interest, values) :
     vdists_y_mean = values[list(values.keys())[0]][1]
     vdists_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(velbins,vdists_y_mean,'b.-',lw=2, label='Synthetic data')
+    plt.plot(velbins,vdists_y_mean,'b.-',lw=2, label='Real data')
     plt.fill_between(velbins,vdists_y_mean+vdists_y_std,vdists_y_mean-vdists_y_std,color='b',alpha=0.2)
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
@@ -128,11 +125,10 @@ def compile_svmd(part_of_interest, values) :
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
-    plt.xlim(0, 3)
     plt.title('Scaled velocity magnitude distribution')
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svmd" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_svmd" + str(base_leave[0]) + ".png")
     
     plt.close()
     
@@ -153,27 +149,30 @@ def compile_losses(part_of_interest, values) :
     plt.xlabel('Samples')
     plt.ylabel('Loss')
     plt.title('Testing Loss over testing samples')
+    plt.ylim(0.3, 3)
     plt.legend()
     
     #move the graph slightly to the right for the ylabel to be in the figure
     plt.subplots_adjust(left=0.15)
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_testing_losses" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_testing_losses" + str(base_leave[0]) + ".png")
     
     plt.close(f)
     
     f = plt.figure()
     
+    
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.semilogx(values[list(values.keys())[i]][1]["loss"], label=label)
+        plt.semilogx(np.array(values[list(values.keys())[i]][1]["loss"]).flatten(), label=label)
     
     plt.xlabel('Samples')
     plt.ylabel('Loss')
     plt.title('Training Loss over training samples')
+    plt.ylim(0.5, 5)
     plt.legend()
     
-    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_training_losses" + base_extension[0] + ".png")
+    plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_training_losses" + str(base_leave[0]) + ".png")
     
     plt.close(f)
 
@@ -231,10 +230,6 @@ group(size_messages_entry)
 distrib_entry = base_entry.copy()
 distrib_entry.update({"distribution": distribs})
 group(distrib_entry)
-
-out_entry = base_entry.copy()
-out_entry.update({"out_channels": out_channels})
-group(out_entry)
 
 horizon_entry = base_entry.copy()
 horizon_entry.update({"horizon": horizons})

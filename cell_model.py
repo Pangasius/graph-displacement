@@ -48,38 +48,44 @@ class Gatv2Predictor(torch.nn.Module):
         for i in range(self.messages):
             self.message_passers.append(GATv2Conv(self.hidden_channels, self.hidden_channels, heads=self.message_passers_heads, dropout=self.dropout, concat=False, edge_dim=self.edge_dim, add_self_loops=False, fill_value=0.0))
         
-    def forward_encode(self, x) :
+    def forward_encode(self, x, many_many=False) :
         #encode
         x = self.encoder_resize(x.view(-1, self.in_channels)).view(self.horizon, -1, self.hidden_channels)
         
         x = self.transformer_encoder(x)
         
-        x = x.mean(dim=0, keepdim=True)
+        if many_many == False:
+            x = x.mean(dim=0, keepdim=True)
         
         x = self.norm_encoder(x)
         
         return x
     
-    def forward_message(self, y, edge_index, edge_attr) :
-        y = y.view(-1, self.hidden_channels)
-        for i in range(self.messages):
-            y = y + F.leaky_relu(self.message_passers[i](y, edge_index, edge_attr))
+    def forward_message(self, x, edge_index, edge_attr) :
+        to_return = torch.tensor([], device=x.device)
         
-        return y
+        for i in range(x.shape[0]) :
+            y = x[i].clone()
+            for j in range(self.messages):
+                y = y + F.leaky_relu(self.message_passers[j](y, edge_index, edge_attr))
+                
+            to_return = torch.cat((to_return, y.unsqueeze(0)), dim=0)
+        
+        return to_return
     
     def forward_decode(self, xshape, y, encoder_extended) :
-        y = y.view(1, xshape[1], self.hidden_channels)
+        y = y.view(-1, xshape[1], self.hidden_channels)
         
         # different nodes will be considered as batches
-        y = self.transformer_decoder(y, encoder_extended).view(xshape[1], self.hidden_channels)
+        y = self.transformer_decoder(y, encoder_extended)
         
         y = self.norm_decoder(y)
 
-        y = self.decoder_resize(y).view(1, xshape[1], self.out_channels)
+        y = self.decoder_resize(y).view(-1, xshape[1], self.out_channels)
         
         return y
         
-    def forward(self, x, edge_index, edge_attr, params=None, only_mean=False):
+    def forward(self, x, edge_index, edge_attr, params=None, only_mean=False, many_many=False):
         if len(x.shape) == 2 :
             x = x.unsqueeze(0)
             
@@ -92,7 +98,7 @@ class Gatv2Predictor(torch.nn.Module):
             xshape = x.shape
 
         #encode
-        encoded = self.forward_encode(x)
+        encoded = self.forward_encode(x, many_many=many_many)
 
         #message passing
         y = self.forward_message(encoded, edge_index, edge_attr)
@@ -112,7 +118,9 @@ class Gatv2Predictor(torch.nn.Module):
                     print(name, param.grad.mean())
 
     def loss_relative_direct(self, pred, target, loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, distrib='normal', aggr = 'mean', masks=None, wrapped_columns=[]) :
+        
         if target.shape[0] != pred.shape[0] + 1 :
+            print(target.shape[0], pred.shape[0] + 1)
             raise Exception("target.shape[0] != pred.shape[0] + 1")
         
         previous = target[:-1].to(pred.device)

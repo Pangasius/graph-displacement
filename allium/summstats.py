@@ -398,7 +398,7 @@ def getMSD(data, usetype=[1],verbose=True, periodic=True):
     msd=np.empty((data.Nsnap-1,))
     
     for t in range(data.Nsnap-1): 
-        smax=data.Nsnap-t
+        smax=data.Nsnap-t 
 
         # get tracer idx for each timestep
         isdata = data.gettypes(usetype,t)

@@ -157,10 +157,10 @@ class CellGraphDataset(Dataset):
         N = rval.shape[1]
 
         if not wrap :
-            batch = torch.arange(T).repeat_interleave(N).to(torch.long)
+            batch = torch.arange(T).repeat_interleave(N).to(torch.long).to(rval.device)
             
             if masks is not None :
-                rval_masked = torch.where(masks.cpu().to(torch.bool), torch.tensor([np.nan, np.nan]), rval)
+                rval_masked = torch.where(masks.to(torch.bool).to(rval.device), torch.tensor([np.nan, np.nan]).to(rval.device), rval)
             else :
                 rval_masked = rval
         
@@ -203,23 +203,28 @@ class CellGraphDataset(Dataset):
             #we can do this in one line of code
 
             edge_attr = edge_attr - (edge_attr > 0.5).float() + (edge_attr < -0.5).float()
+
+        if T == 1 and previous is None :
+            return rval, edge_index, edge_attr
         
         #we will add to rval the difference of positions from a time step to the next
+
         rval = rval.reshape(T, N, -1)
         rval = torch.cat((rval, torch.zeros_like(rval)), dim=2)
-        if T == 1 and previous is not None:
-            rval[0,:,2:] = rval[0,:, :2] - previous
-        elif T > 1  and previous is None:
+
+        if previous is not None:
+            rval[:,:,2:] = rval[:,:, :2] - previous
+        elif T > 1 :
             rval[1:,:,2:] = rval[1:,:,:2] - rval[:-1,:,:2]
         else :
-            raise Exception("Either T must be greater than 1 or previous must be provided")
+            raise ValueError("T is 1 but previous is None")
         
         if wrap :
             #substract 1 to the speeds if they are greater than 0.5
             rval[:,:,2:] = rval[:,:,2:] - (rval[:,:,2:] > 0.5).float() + (rval[:,:,2:] < -0.5).float()
             
         #add the degree of each node to the node
-        degree = torch.zeros((T, N, 1))
+        degree = torch.zeros((T, N, 1)).to(rval.device)
         for i in range(T) :
             for j in range(N) :
                 degree[i, j, 0] = torch.sum(edge_index[1, :] == i*N+j)
