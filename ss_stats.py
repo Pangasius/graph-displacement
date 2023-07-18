@@ -30,7 +30,7 @@ def create_stats(data_y, data_x, path_name, name_complete, extension=None) :
         #make_real_animation((data_y[0], data_x[0]), path_name + "model" + name_complete + "_real.gif")
         label = "Real data"
     else :
-        label = label
+        label = "Synthetic data"
     
     #we will show the distribution of speeds
     speed_x_axis0 = data_x[:,:,:,2].flatten() 
