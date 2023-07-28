@@ -459,7 +459,7 @@ class RealCellGraphDataset(CellGraphDataset):
         
         rval_position, edge_index, edge_attr = self.get_edges(rval_position, self.max_degree, wrap=self.wrap, masks=masks)
         
-        #we concat x,y,dx,dy,degree with ori,major,minor,area
+        #we concat x,y,dx,dy with ori,major,minor,area degree
         #we have thus x,y,dx,dy,ori,major,minor,area,degree
         rval = torch.cat((rval_position[:,:,:4], rval[:,:,2:], rval_position[:,:,4:]), dim=2)
 

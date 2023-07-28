@@ -151,7 +151,7 @@ class Gatv2Predictor(torch.nn.Module):
         
         std = torch.exp(log_std)
     
-        return self.diff(mu, std, log_std, targ, loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks, wrap_columns=wrapped_columns)
+        return self.diff(mu, std, log_std, targ, loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
     
     def diff(self, mu, std, log_std, target, distrib='normal', loss_history = {"loss_mean" : [], "loss_log" : [], "loss" : []}, aggr = 'mean', masks=None, wrap_columns=[]) :
         target = target.to(mu.device)
@@ -174,6 +174,7 @@ class Gatv2Predictor(torch.nn.Module):
 
             loss_mean = diff / (2 * std**2) 
             loss_log = log_std
+            
         elif distrib == 'laplace' :
             diff_not_wrapped = torch.abs((mu[:, :, not_wrap_columns] - target[:, :, not_wrap_columns]))
             

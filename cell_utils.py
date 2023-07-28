@@ -122,7 +122,7 @@ def make_animation(saved_result, animation_name, show_speed = True) :
         pos_x = x[i, :, :2]
 
         #now plot the graph as bubbles to show the difference between the two
-        ax_true.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="Synthetic data position")
+        ax_true.scatter(pos_x[:, 0], pos_x[:, 1], s=100, c='b', alpha=0.5, label="Data position")
         ax_pred.scatter(pos_out[:, 0], pos_out[:, 1], s=100, c='r', alpha=0.5, label="Model position")
 
         if show_speed :
@@ -130,7 +130,7 @@ def make_animation(saved_result, animation_name, show_speed = True) :
             speed_x = x[i, :, 2:]
 
             #show an arrow for the speed
-            ax_true.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="Synthetic data speed")
+            ax_true.quiver(pos_x[:, 0], pos_x[:, 1], speed_x[:, 0], speed_x[:, 1], color='b', alpha=0.5, label="Data speed")
             ax_pred.quiver(pos_out[:, 0], pos_out[:, 1], speed_out[:, 0], speed_out[:, 1], color='r', alpha=0.5, label="Model speed")
         
         for ax in [ax_true, ax_pred] :

@@ -86,12 +86,12 @@ def run(number_of_messages, size_of_messages, epochs, distrib, horizon, leave_ou
     model = Gatv2Predictor(in_channels=8+1+1, out_channels=16, hidden_channels=size_of_messages, dropout=0.05, edge_dim=2, messages=number_of_messages, wrap=data_train.wrap, horizon=horizon)
     
     #Load model  
-    
-    epoch_to_load = 1600
+    """
+    epoch_to_load = 29
     if exists(model_path + str(epoch_to_load) + ".pt") :
         model.load_state_dict(torch.load(model_path + str(epoch_to_load) + ".pt"))
         print("Loaded model")
-    
+    """
 
     #might want to investigate AdamP 
     optimizer = AdamP(model.parameters(), lr=1e-3, betas=(0.9, 0.98), eps=1e-4, weight_decay=5e-3, delta=0.1, wd_ratio=0.1, nesterov=True)

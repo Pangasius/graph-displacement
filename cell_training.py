@@ -112,7 +112,7 @@ def run_single_recursive(model : Gatv2Predictor, data, i : int, device : torch.d
             loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks, wrapped_columns=[4])
         else :
             loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
-            
+                        
     return loss, out.detach(), x[1:, :, :model.out_channels // 2].detach()
 
 

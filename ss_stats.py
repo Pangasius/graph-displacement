@@ -15,6 +15,13 @@ import json
 from cell_utils import make_animation, make_real_animation
 
 def create_stats(data_y, data_x, path_name, name_complete, extension=None) :
+    if extension is None :
+        #make an animation of the prediction using all predicted parameters
+        make_real_animation((data_y[0].cpu().numpy(), data_x[0].cpu().numpy()), path_name + "model" + name_complete + "_real.gif")
+        label = "Real data"
+    else :
+        label = "Synthetic data"
+    
     data_y = torch.cat((data_y[:,1:,:,:2], data_y[:,1:,:,:2] - data_y[:,:-1,:,:2]), dim=3)
     data_x = torch.cat((data_x[:,1:,:,:2], data_x[:,1:,:,:2] - data_x[:,:-1,:,:2]), dim=3)
 
@@ -24,13 +31,6 @@ def create_stats(data_y, data_x, path_name, name_complete, extension=None) :
     
     #make an animation of the prediction
     make_animation((data_y[0], data_x[0]), path_name + "model" + name_complete + ".gif", True)
-    
-    if extension is None :
-        #make an animation of the prediction using all predicted parameters
-        #make_real_animation((data_y[0], data_x[0]), path_name + "model" + name_complete + "_real.gif")
-        label = "Real data"
-    else :
-        label = "Synthetic data"
     
     #we will show the distribution of speeds
     speed_x_axis0 = data_x[:,:,:,2].flatten() 
@@ -43,22 +43,30 @@ def create_stats(data_y, data_x, path_name, name_complete, extension=None) :
     
     f, ax = plt.subplots(1, 3, figsize=(10, 3))
     
-    ax[0].hist(speed_y_axis0, bins=100, color="red", density=True, alpha=0.5)
-    ax[1].hist(speed_y_axis1, bins=100, color="red", density=True, alpha=0.5)
-    ax[2].hist(speed_y_total, bins=100, color="red", density=True, alpha=0.5)
+    if extension is not None :
+        ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
+        ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
+        ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
+    else :
+        ax[0].set_xlim(-5, 5)
+        ax[1].set_xlim(-5, 5)
+        ax[2].set_xlim(0, 5)
+        
+    bins = np.linspace(ax[0].get_xlim()[0], ax[0].get_xlim()[1], 100)
     
-    ax[0].hist(speed_x_axis0, bins=100, color="blue", density=True, alpha=0.5)
-    ax[1].hist(speed_x_axis1, bins=100, color="blue", density=True, alpha=0.5)
-    ax[2].hist(speed_x_total, bins=100, color="blue", density=True, alpha=0.5)
+    ax[0].hist(speed_y_axis0, bins=bins, color="red", density=True, alpha=0.5)
+    ax[1].hist(speed_y_axis1, bins=bins, color="red", density=True, alpha=0.5)
+    ax[2].hist(speed_y_total, bins=bins, color="red", density=True, alpha=0.5)
+    
+    ax[0].hist(speed_x_axis0, bins=bins, color="blue", density=True, alpha=0.5)
+    ax[1].hist(speed_x_axis1, bins=bins, color="blue", density=True, alpha=0.5)
+    ax[2].hist(speed_x_total, bins=bins, color="blue", density=True, alpha=0.5)
     
     ax[0].set_title("Speed distribution in x")
     ax[1].set_title("Speed distribution in y")
     ax[2].set_title("Speed distribution")
     
-    if extension is not None :
-        ax[0].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[0].set_xlim(-0.5, 0.5)
-        ax[1].set_xlim(-3, 3) if extension.__contains__("_hv") else ax[1].set_xlim(-0.5, 0.5)
-        ax[2].set_xlim(0, 3) if extension.__contains__("_hv") else ax[2].set_xlim(0, 0.5)
+
     
     #make a single x label
     f.text(0.5, 0.04, 'Speed Magnitude', ha='center')

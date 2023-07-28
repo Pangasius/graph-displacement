@@ -2,6 +2,7 @@ import numpy as np
 import pickle as pkl
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 epoch = 1601
 
@@ -9,12 +10,17 @@ number_of_messages = [1,2,3,4]
 size_of_messages = [32, 64, 128, 256, 512, 1024]
 distribs = ["laplace", "normal"]
 horizons = [1,2,3,4,5]
+leave_out = [0,1,2,3]
 
 base_number_of_message = [2]
-base_size_of_message = [256]
-base_distrib = ["laplace"]
-base_horizon = [1]
+base_size_of_message = [128]
+base_distrib = ["normal"]
+base_horizon = [4]
 base_leave = [0]
+
+colors_data = [mcolors.CSS4_COLORS["midnightblue"], mcolors.CSS4_COLORS["blue"], mcolors.CSS4_COLORS["steelblue"], mcolors.CSS4_COLORS["aqua"]]
+
+colors_model = [mcolors.CSS4_COLORS["olive"], mcolors.CSS4_COLORS["deeppink"], mcolors.CSS4_COLORS["chocolate"], mcolors.CSS4_COLORS["gold"]]
 
 base_entry = {"leave": base_leave,
                             "number_of_messages": base_number_of_message,
@@ -41,15 +47,17 @@ def fetch_data(entry, prefix, suffix) :
 
 def compile_msd(part_of_interest, values) :
     tval = values[list(values.keys())[0]][0]
-    msd_y_mean = values[list(values.keys())[0]][1]
     
-    plt.loglog(tval,msd_y_mean,'b.-',lw=2, label='Real data')
-    plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="cyan")
+    for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
+        msd_y_mean = values[list(values.keys())[i]][1]
+        plt.loglog(tval,msd_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
+        plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color=colors_data[i], alpha=0.5)
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         msd_x_mean = values[list(values.keys())[i]][3]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.loglog(tval,msd_x_mean,'.-',lw=2, label=label)
+        plt.loglog(tval,msd_x_mean,'.-',lw=2, label=label, color=colors_model[i])
+        plt.loglog(tval,msd_x_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color=colors_model[i], alpha=0.5)
     
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean square displacement')
@@ -62,18 +70,19 @@ def compile_msd(part_of_interest, values) :
     
 def compile_mv(part_of_interest, values) :
     xval = values[list(values.keys())[0]][0]
-    vav_y_mean = values[list(values.keys())[0]][1]
-    vav_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Real data')
-    plt.fill_between(xval, vav_y_mean-vav_y_std, vav_y_mean+vav_y_std, alpha=0.2, color='b')
+    for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
+        vav_y_mean = values[list(values.keys())[i]][1]
+        vav_y_std = values[list(values.keys())[i]][2]
+        plt.plot(xval,vav_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
+        plt.fill_between(xval, vav_y_mean-vav_y_std, vav_y_mean+vav_y_std, alpha=0.2, color=colors_data[i])
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vav_x_mean = values[list(values.keys())[i]][3]
         vav_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.plot(xval,vav_x_mean,'.-',lw=2, label=label)
-        plt.fill_between(xval, vav_x_mean-vav_x_std, vav_x_mean+vav_x_std, alpha=0.2)
+        plt.plot(xval,vav_x_mean,'.-',lw=2, label=label, color=colors_model[i])
+        plt.fill_between(xval, vav_x_mean-vav_x_std, vav_x_mean+vav_x_std, alpha=0.2, color=colors_model[i])
         
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean velocity')
@@ -86,18 +95,19 @@ def compile_mv(part_of_interest, values) :
     
 def compile_svcd(part_of_interest, values) :
     velbins2 = values[list(values.keys())[0]][0]
-    vdist2_y_mean = values[list(values.keys())[0]][1]
-    vdist2_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(velbins2,vdist2_y_mean,'b.-',lw=2, label='Real data')
-    plt.fill_between(velbins2,vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color='b',alpha=0.2)
+    for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
+        vdist2_y_mean = values[list(values.keys())[i]][1]
+        vdist2_y_std = values[list(values.keys())[i]][2]
+        plt.plot(velbins2,vdist2_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
+        plt.fill_between(velbins2,vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color=colors_data[i],alpha=0.2)
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdist2_x_mean = values[list(values.keys())[i]][3]
         vdist2_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.plot(velbins2,vdist2_x_mean,'.-',lw=2, label=label)
-        plt.fill_between(velbins2,vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,alpha=0.2)
+        plt.plot(velbins2,vdist2_x_mean,'.-',lw=2, label=label, color=colors_model[i])
+        plt.fill_between(velbins2,vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,alpha=0.2, color=colors_model[i])
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
@@ -110,18 +120,20 @@ def compile_svcd(part_of_interest, values) :
     
 def compile_svmd(part_of_interest, values) :
     velbins = values[list(values.keys())[0]][0]
-    vdists_y_mean = values[list(values.keys())[0]][1]
-    vdists_y_std = values[list(values.keys())[0]][2]
     
-    plt.plot(velbins,vdists_y_mean,'b.-',lw=2, label='Real data')
-    plt.fill_between(velbins,vdists_y_mean+vdists_y_std,vdists_y_mean-vdists_y_std,color='b',alpha=0.2)
+    
+    for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
+        vdists_y_mean = values[list(values.keys())[i]][1]
+        vdists_y_std = values[list(values.keys())[i]][2]
+        plt.plot(velbins,vdists_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
+        plt.fill_between(velbins,vdists_y_mean+vdists_y_std,vdists_y_mean-vdists_y_std,color=colors_data[i],alpha=0.2)
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdists_x_mean = values[list(values.keys())[i]][3]
         vdists_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.plot(velbins,vdists_x_mean,'.-',lw=2, label=label)
-        plt.fill_between(velbins,vdists_x_mean+vdists_x_std,vdists_x_mean-vdists_x_std,alpha=0.2)
+        plt.plot(velbins,vdists_x_mean,'.-',lw=2, label=label, color=colors_model[i])
+        plt.fill_between(velbins,vdists_x_mean+vdists_x_std,vdists_x_mean-vdists_x_std,alpha=0.2, color=colors_model[i])
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
@@ -138,9 +150,7 @@ def compile_losses(part_of_interest, values) :
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         
-        color = next(plt.gca()._get_lines.prop_cycler)['color']
-        
-        plt.semilogx(values[list(values.keys())[i]][0]["loss"], label=label, color=color)
+        plt.loglog(values[list(values.keys())[i]][0]["loss"], label=label, color=colors_model[i])
         
         #plt.loglog(values[list(values.keys())[i]][0]["loss_mean"], linestyle=':', color=color)
         
@@ -149,7 +159,7 @@ def compile_losses(part_of_interest, values) :
     plt.xlabel('Samples')
     plt.ylabel('Loss')
     plt.title('Testing Loss over testing samples')
-    plt.ylim(0.3, 3)
+    #plt.ylim(1.5, 5)
     plt.legend()
     
     #move the graph slightly to the right for the ylabel to be in the figure
@@ -164,12 +174,12 @@ def compile_losses(part_of_interest, values) :
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
-        plt.semilogx(np.array(values[list(values.keys())[i]][1]["loss"]).flatten(), label=label)
+        plt.loglog(np.array(values[list(values.keys())[i]][1]["loss"]).flatten(), label=label, color=colors_model[i])
     
     plt.xlabel('Samples')
     plt.ylabel('Loss')
     plt.title('Training Loss over training samples')
-    plt.ylim(0.5, 5)
+    #plt.ylim(0.5, 5)
     plt.legend()
     
     plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_training_losses" + str(base_leave[0]) + ".png")
@@ -218,7 +228,8 @@ def group(entry) :
                 values.update({list(entry.values())[i][j]: data})
                 
         compile_values(part_of_interest, values, to_analyse[a])
-    
+ 
+""" 
 num_messages_entry = base_entry.copy()
 num_messages_entry.update({"number_of_messages": number_of_messages})
 group(num_messages_entry)
@@ -234,3 +245,7 @@ group(distrib_entry)
 horizon_entry = base_entry.copy()
 horizon_entry.update({"horizon": horizons})
 group(horizon_entry)
+"""  
+leave_out_entry = base_entry.copy()
+leave_out_entry.update({"leave": leave_out})
+group(leave_out_entry)

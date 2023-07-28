@@ -151,3 +151,5 @@ test*
 /allium/*
 
 /result_archive
+
+/gflownet
