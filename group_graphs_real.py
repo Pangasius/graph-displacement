@@ -13,14 +13,14 @@ horizons = [1,2,3,4,5]
 leave_out = [0,1,2,3]
 
 base_number_of_message = [2]
-base_size_of_message = [128]
+base_size_of_message = [64]
 base_distrib = ["normal"]
 base_horizon = [4]
 base_leave = [0]
 
-colors_data = [mcolors.CSS4_COLORS["midnightblue"], mcolors.CSS4_COLORS["blue"], mcolors.CSS4_COLORS["steelblue"], mcolors.CSS4_COLORS["aqua"]]
+colors_data = [mcolors.CSS4_COLORS["midnightblue"], mcolors.CSS4_COLORS["blue"], mcolors.CSS4_COLORS["steelblue"], mcolors.CSS4_COLORS["aqua"], mcolors.CSS4_COLORS["turquoise"], mcolors.CSS4_COLORS["darkcyan"]]
 
-colors_model = [mcolors.CSS4_COLORS["olive"], mcolors.CSS4_COLORS["deeppink"], mcolors.CSS4_COLORS["chocolate"], mcolors.CSS4_COLORS["gold"]]
+colors_model = [mcolors.CSS4_COLORS["olive"], mcolors.CSS4_COLORS["deeppink"], mcolors.CSS4_COLORS["chocolate"], mcolors.CSS4_COLORS["gold"], mcolors.CSS4_COLORS["darkorange"], mcolors.CSS4_COLORS["darkred"]]
 
 base_entry = {"leave": base_leave,
                             "number_of_messages": base_number_of_message,
@@ -52,12 +52,23 @@ def compile_msd(part_of_interest, values) :
         msd_y_mean = values[list(values.keys())[i]][1]
         plt.loglog(tval,msd_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
         plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color=colors_data[i], alpha=0.5)
+        
+    distances = []
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         msd_x_mean = values[list(values.keys())[i]][3]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.loglog(tval,msd_x_mean,'.-',lw=2, label=label, color=colors_model[i])
         plt.loglog(tval,msd_x_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color=colors_model[i], alpha=0.5)
+        
+        #measure the distance between the two curves
+        msd_y_mean = values[list(values.keys())[0]][1]
+        distance = np.linalg.norm(msd_y_mean - msd_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVMD : ", distances)
     
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean square displacement')
@@ -76,6 +87,8 @@ def compile_mv(part_of_interest, values) :
         vav_y_std = values[list(values.keys())[i]][2]
         plt.plot(xval,vav_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
         plt.fill_between(xval, vav_y_mean-vav_y_std, vav_y_mean+vav_y_std, alpha=0.2, color=colors_data[i])
+        
+    distances = []
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vav_x_mean = values[list(values.keys())[i]][3]
@@ -83,6 +96,15 @@ def compile_mv(part_of_interest, values) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(xval,vav_x_mean,'.-',lw=2, label=label, color=colors_model[i])
         plt.fill_between(xval, vav_x_mean-vav_x_std, vav_x_mean+vav_x_std, alpha=0.2, color=colors_model[i])
+        
+        #measure the distance between the two curves
+        vav_y_mean = values[list(values.keys())[0]][1]
+        distance = np.linalg.norm(vav_y_mean - vav_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVMD : ", distances)
         
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean velocity')
@@ -101,6 +123,8 @@ def compile_svcd(part_of_interest, values) :
         vdist2_y_std = values[list(values.keys())[i]][2]
         plt.plot(velbins2,vdist2_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
         plt.fill_between(velbins2,vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color=colors_data[i],alpha=0.2)
+        
+    distances = []
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdist2_x_mean = values[list(values.keys())[i]][3]
@@ -108,6 +132,15 @@ def compile_svcd(part_of_interest, values) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(velbins2,vdist2_x_mean,'.-',lw=2, label=label, color=colors_model[i])
         plt.fill_between(velbins2,vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,alpha=0.2, color=colors_model[i])
+        
+        #measure the distance between the two curves
+        vdist2_y_mean = values[list(values.keys())[0]][1]
+        distance = np.linalg.norm(vdist2_y_mean - vdist2_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVMD : ", distances)
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
@@ -127,6 +160,8 @@ def compile_svmd(part_of_interest, values) :
         vdists_y_std = values[list(values.keys())[i]][2]
         plt.plot(velbins,vdists_y_mean,'.-',lw=2, label='Real data [' + str(i) + ']', color=colors_data[i])
         plt.fill_between(velbins,vdists_y_mean+vdists_y_std,vdists_y_mean-vdists_y_std,color=colors_data[i],alpha=0.2)
+        
+    distances = []
     
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdists_x_mean = values[list(values.keys())[i]][3]
@@ -134,6 +169,15 @@ def compile_svmd(part_of_interest, values) :
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(velbins,vdists_x_mean,'.-',lw=2, label=label, color=colors_model[i])
         plt.fill_between(velbins,vdists_x_mean+vdists_x_std,vdists_x_mean-vdists_x_std,alpha=0.2, color=colors_model[i])
+        
+        #measure the distance between the two curves
+        vdists_y_mean = values[list(values.keys())[0]][1]
+        distance = np.linalg.norm(vdists_y_mean - vdists_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVMD : ", distances)
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')

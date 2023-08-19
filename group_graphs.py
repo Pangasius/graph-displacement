@@ -49,10 +49,20 @@ def compile_msd(part_of_interest, values) :
     plt.loglog(tval,msd_y_mean,'b.-',lw=2, label='Synthetic data')
     plt.loglog(tval,msd_y_mean[1]/(1.0*tval[1])*tval,'--',lw=2,color="cyan")
     
+    distances = []
+    
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         msd_x_mean = values[list(values.keys())[i]][3]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.loglog(tval,msd_x_mean,'.-',lw=2, label=label)
+        
+        #measure the distance between the two curves
+        distance = np.linalg.norm(msd_y_mean - msd_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances MSD : ", distances)
     
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean square displacement')
@@ -60,6 +70,8 @@ def compile_msd(part_of_interest, values) :
     plt.legend()
 
     plt.savefig("models/summary/" + list(part_of_interest.keys())[0] + "_msd" + base_extension[0] + ".png")
+    
+    
     
     plt.close()
     
@@ -71,12 +83,22 @@ def compile_mv(part_of_interest, values) :
     plt.plot(xval,vav_y_mean,'b.-',lw=2, label='Synthetic data')
     plt.fill_between(xval, vav_y_mean-vav_y_std, vav_y_mean+vav_y_std, alpha=0.2, color='b')
     
+    distances = []
+    
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vav_x_mean = values[list(values.keys())[i]][3]
         vav_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(xval,vav_x_mean,'.-',lw=2, label=label)
         plt.fill_between(xval, vav_x_mean-vav_x_std, vav_x_mean+vav_x_std, alpha=0.2)
+        
+        #measure the distance between the two curves
+        distance = np.linalg.norm(vav_y_mean - vav_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) + "\nDistances MV : ", distances)
         
     plt.xlabel('Time (hours)')
     plt.ylabel('Mean velocity')
@@ -95,12 +117,21 @@ def compile_svcd(part_of_interest, values) :
     plt.plot(velbins2,vdist2_y_mean,'b.-',lw=2, label='Synthetic data')
     plt.fill_between(velbins2,vdist2_y_mean+vdist2_y_std,vdist2_y_mean-vdist2_y_std,color='b',alpha=0.2)
     
+    distances = []
+    
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdist2_x_mean = values[list(values.keys())[i]][3]
         vdist2_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(velbins2,vdist2_x_mean,'.-',lw=2, label=label)
         plt.fill_between(velbins2,vdist2_x_mean+vdist2_x_std,vdist2_x_mean-vdist2_x_std,alpha=0.2)
+        #measure the distance between the two curves
+        distance = np.linalg.norm(vdist2_y_mean - vdist2_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVCD : ", distances)
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
@@ -119,12 +150,22 @@ def compile_svmd(part_of_interest, values) :
     plt.plot(velbins,vdists_y_mean,'b.-',lw=2, label='Synthetic data')
     plt.fill_between(velbins,vdists_y_mean+vdists_y_std,vdists_y_mean-vdists_y_std,color='b',alpha=0.2)
     
+    distances = []
+    
     for i in range(len(part_of_interest[list(part_of_interest.keys())[0]])) :
         vdists_x_mean = values[list(values.keys())[i]][3]
         vdists_x_std = values[list(values.keys())[i]][4]
         label = list(part_of_interest.keys())[0] + " = " + str(part_of_interest[list(part_of_interest.keys())[0]][i])
         plt.plot(velbins,vdists_x_mean,'.-',lw=2, label=label)
         plt.fill_between(velbins,vdists_x_mean+vdists_x_std,vdists_x_mean-vdists_x_std,alpha=0.2)
+        
+        #measure the distance between the two curves
+        distance = np.linalg.norm(vdists_y_mean - vdists_x_mean)
+        #truncate to two decimals 
+        distance = int(distance * 100) / 100.0
+        distances.append(distance)
+        
+    print("Interest : " + str(list(part_of_interest.keys())) + ", " + str(part_of_interest.values()) +"\nDistances SVMD : ", distances)
         
     plt.xlabel('v/<v>')
     plt.ylabel('P(v/<v>)')
@@ -196,7 +237,7 @@ def group(entry) :
     part_of_interest = {}
     values = {}
     
-    to_analyse = ["msd", "mv", "svcd", "svmd", "losses"]
+    to_analyse = ["msd", "mv", "svcd", "svmd"]#, "losses"]
     to_analyse_suffix = [".npy"] * 4 + [".pkl"]
     
     for a in range(len(to_analyse)):

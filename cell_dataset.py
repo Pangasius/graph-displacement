@@ -136,7 +136,7 @@ class CellGraphDataset(Dataset):
         
         rval, edge_index, edge_attr = self.get_edges(rval[:,:,:2], self.max_degree, wrap=self.wrap, masks=None)
 
-        #additional parameters : tau, epsilon, v0, r, dt, framerate
+        #additional parameters : tau, epsilon, v0, r, dt, max_time, k
         params = torch.tensor([tau, epsilon, v0, x.param.R, x.param.dt, x.param.output_time, k]).to(torch.float)
         
         if self.memorize :
@@ -519,9 +519,7 @@ class RealCellGraphDataset(CellGraphDataset):
               
         rval = rval[start_time:start_time+duration, mask, :]
         masks = masks[start_time:start_time+duration, mask, :]
-        
-        rval = (rval * masks).to(torch.float)
-        
+
         xshape = rval.shape
         
         #we will reconstruct the edge_index and edge_attr

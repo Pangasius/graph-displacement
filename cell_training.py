@@ -9,7 +9,7 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
     out = x[0].detach().clone().unsqueeze(dim=0).to(device)
     predicted_values = torch.tensor([]).to(device)
 
-    _, edge_index, edge_attr = data.get_edges(out[0,:,:2], data.max_degree, wrap=data.wrap, masks=masks[0])
+    _, edge_index, edge_attr = data.get_edges(out[0,:,:2], data.max_degree, wrap=data.wrap, masks=masks)
     
     horizon = model.horizon
         
@@ -28,11 +28,11 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
         else :
             values = output[:,:,:model.out_channels//2] + out[current_time,:,:model.out_channels//2]
         
-        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks[current_time+1])
+        returned, edge_index, edge_attr = data.get_edges(values[:,:,:2], data.max_degree, wrap=data.wrap, previous=out[current_time,:,:2], masks=masks)
         
         if values.shape[0] > 1 and values.shape[0] < duration - 1:
             #very slow thing 
-            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks[current_time+1])
+            _, edge_index, edge_attr = data.get_edges(values[-1,:,:2], data.max_degree, wrap=data.wrap, previous=None, masks=masks)
                 
         if model.out_channels == 4 :
             values = returned
@@ -43,7 +43,7 @@ def iterate(data, x, params, masks, model, duration, device, draw, distrib, many
         out = torch.cat((out, values), dim=0)
         predicted_values = torch.cat((predicted_values, output), dim=0)
           
-    return out[1:duration], predicted_values[:duration-1]
+    return out[1:], predicted_values
     
 def compute_parameters(model : Gatv2Predictor, data : CellGraphDataset, device : torch.device, duration : int = -1, distrib='normal', many_many = False) :
     
@@ -111,7 +111,7 @@ def run_single_recursive(model : Gatv2Predictor, data, i : int, device : torch.d
         if isinstance(data, RealCellGraphDataset) :
             loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks, wrapped_columns=[4])
         else :
-            loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=masks)
+            loss = model.loss_relative_direct(diffs, x[:,:, :model.out_channels // 2], loss_history=loss_history, distrib=distrib, aggr=aggr, masks=None)
                         
     return loss, out.detach(), x[1:, :, :model.out_channels // 2].detach()
 
@@ -162,7 +162,7 @@ def train(model : Gatv2Predictor, optimizer : torch.optim.Optimizer, scheduler :
 
         #duration is a random number between 2 and the maximum duration
         if isinstance(data, RealCellGraphDataset) :
-            duration =  min(epoch + 2, 4)
+            duration =  min(epoch//32+2,6)
         elif isinstance(data, CellGraphDataset) :
             duration =  min(epoch + 2, 8)
         else :

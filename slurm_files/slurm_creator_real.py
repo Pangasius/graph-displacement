@@ -9,9 +9,9 @@ horizons = [1,2,3,4,5]
 leaves = [0,1,2,3]
 
 base_number_of_message = 2
-base_size_of_message = 256
-base_distrib = "laplace"
-base_horizon = 1
+base_size_of_message = 64
+base_distrib = "normal"
+base_horizon = 4
 base_leave = 0
 
 slurm_script = "\
@@ -55,6 +55,7 @@ def launch(number_of_message=base_number_of_message,
 
     os.system("sbatch slurm_files/cell_pred.sbatch")
 
+"""
 for number_of_message in number_of_messages:
     launch(number_of_message=number_of_message)
 for size_of_message in size_of_messages:
@@ -63,3 +64,7 @@ for distrib in distribs:
     launch(distrib=distrib)
 for horizon in horizons:
     launch(horizon=horizon)
+"""
+    
+for leave in leaves:
+    launch(leave=leave)

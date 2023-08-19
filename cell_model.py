@@ -165,7 +165,7 @@ class Gatv2Predictor(torch.nn.Module):
             diff_not_wrapped = (mu[:, :, not_wrap_columns] - target[:, :, not_wrap_columns]) ** 2
             
             wrapped_diff = torch.abs((mu[:, :, wrap_columns] - target[:, :, wrap_columns]))
-            diff_wrapped = torch.sin(wrapped_diff) + 0.01 * wrapped_diff
+            diff_wrapped = torch.sin(torch.remainder(wrapped_diff, torch.pi)) + 0.01 * wrapped_diff
             
             diff = torch.cat((diff_not_wrapped, diff_wrapped), dim=2)
 
@@ -179,7 +179,7 @@ class Gatv2Predictor(torch.nn.Module):
             diff_not_wrapped = torch.abs((mu[:, :, not_wrap_columns] - target[:, :, not_wrap_columns]))
             
             wrapped_diff = torch.abs((mu[:, :, wrap_columns] - target[:, :, wrap_columns]))
-            diff_wrapped = torch.sin(wrapped_diff) + 0.01 * wrapped_diff
+            diff_wrapped = torch.sin(torch.remainder(wrapped_diff, torch.pi)) + 0.01 * wrapped_diff
             
             diff = torch.cat((diff_not_wrapped, diff_wrapped), dim=2)
 
@@ -201,7 +201,7 @@ class Gatv2Predictor(torch.nn.Module):
         else :
             raise ValueError('aggr must be mean or max')
         
-        loss_history["loss_mean"].append(diff.mean().item())
+        loss_history["loss_mean"].append(loss_mean.mean().item())
         loss_history["loss_log"].append(loss_log.mean().item())
         loss_history["loss"].append(torch.mean(loss_mean + loss_log).item())
     
